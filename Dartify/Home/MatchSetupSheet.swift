@@ -29,35 +29,50 @@ struct MatchSetupSheet: View {
     private var remaining: Int { numPlayers - selected.count }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                header
 
-            ScrollView {
-                VStack(spacing: 12) {
-                    formatCard
-                    playersCard
+                ScrollView {
+                    VStack(spacing: 12) {
+                        formatCard
+                        playersCard
+                    }
+                    .padding(.horizontal, 16)
+                    // Room to scroll the last card clear of the floating button.
+                    .padding(.bottom, 96)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
+                .scrollDismissesKeyboard(.interactively)
             }
-            .scrollDismissesKeyboard(.interactively)
 
-            Button {
-                start(config, selected)
-                dismiss()
-            } label: {
-                Label(remaining == 0 ? "Start match" : "Pick \(remaining) more \(remaining == 1 ? "player" : "players")",
-                      systemImage: "play.fill")
-            }
-            .buttonStyle(SoftPrimaryButtonStyle())
-            .disabled(remaining != 0)
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            startButton
         }
         .background(Soft.shell)
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(32)
+    }
+
+    /// Floats over the scrolling cards, pinned to the bottom; the cards fade out beneath it.
+    private var startButton: some View {
+        Button {
+            start(config, selected)
+            dismiss()
+        } label: {
+            Label(remaining == 0 ? "Start match" : "Pick \(remaining) more \(remaining == 1 ? "player" : "players")",
+                  systemImage: "play.fill")
+        }
+        .buttonStyle(SoftPrimaryButtonStyle())
+        .disabled(remaining != 0)
+        .padding(.horizontal, 16)
+        .padding(.top, 28)
+        .padding(.bottom, 8)
+        .background {
+            LinearGradient(colors: [Soft.shell.opacity(0), Soft.shell], startPoint: .top, endPoint: .center)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+        }
+        // Stay at the bottom while typing a name instead of riding up on the keyboard.
+        .ignoresSafeArea(.keyboard)
     }
 
     private var header: some View {
