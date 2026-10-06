@@ -257,6 +257,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Dartify-Info.plist";
+				DEVELOPMENT_ASSET_PATHS = "\"Dartify/Preview Content\"";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Dartify uses the camera to detect your dartboard and score throws.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -290,6 +291,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Dartify-Info.plist";
+				DEVELOPMENT_ASSET_PATHS = "\"Dartify/Preview Content\"";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Dartify uses the camera to detect your dartboard and score throws.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

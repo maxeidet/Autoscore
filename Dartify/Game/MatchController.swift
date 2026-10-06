@@ -214,3 +214,30 @@ final class MatchController: Identifiable {
         if scoreboard.match != match { scoreboard.match = match }
     }
 }
+
+#if DEBUG
+extension MatchController {
+    /// A three-player best-of-3 match partway through, for SwiftUI previews.
+    static func preview(bust: Bool = false, finished: Bool = false) -> MatchController {
+        let players = ["Max", "Anna", "Leo"].map { SavedPlayer(id: UUID(), name: $0) }
+        let startingScore = finished || bust ? 101 : 501
+        let match = MatchController(
+            config: X01Config(startingScore: startingScore, doubleOut: true, doubleIn: false, legs: finished ? 1 : 3),
+            players: players
+        )
+        func throwDarts(_ darts: [BoardScore]) {
+            for score in darts { match.dartDetected(DetectedDart(x: .nan, y: .nan, score: score)) }
+        }
+        if finished {
+            throwDarts([.init(ring: .treble, number: 20), .init(ring: .single, number: 1), .init(ring: .double, number: 20)])
+            return match
+        }
+        throwDarts([.init(ring: .treble, number: 20), .init(ring: .single, number: 20), .init(ring: .single, number: 5)])
+        match.dartsPulled()
+        throwDarts(bust
+            ? [.init(ring: .treble, number: 20), .init(ring: .treble, number: 20), .init(ring: .treble, number: 20)]
+            : [.init(ring: .treble, number: 19), .init(ring: .double, number: 16)])
+        return match
+    }
+}
+#endif

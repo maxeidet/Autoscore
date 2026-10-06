@@ -16,6 +16,8 @@ struct GameView: View {
     let onRematch: () -> Void
     /// The match is over and saved; go home.
     let onFinish: () -> Void
+    /// Shown instead of the camera feed (Xcode previews have no camera).
+    var backdrop: Image?
 
     @State private var camera = CameraController()
     @State private var showDebug = false
@@ -27,8 +29,15 @@ struct GameView: View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            CameraPreviewView(session: camera.session)
-                .ignoresSafeArea()
+            if let backdrop {
+                Color.clear
+                    .overlay(backdrop.resizable().scaledToFill())
+                    .clipped()
+                    .ignoresSafeArea()
+            } else {
+                CameraPreviewView(session: camera.session)
+                    .ignoresSafeArea()
+            }
 
             BoardOverlay(detection: camera.detection, darts: match.visit)
                 .ignoresSafeArea()
@@ -65,7 +74,7 @@ struct GameView: View {
             .presentationDetents([.medium, .large])
             .onAppear(perform: camera.beginEditing)
         }
-        .task { await camera.start() }
+        .task { if backdrop == nil { await camera.start() } }
         .task(id: match.id) { match.attach(camera) }
         .onChange(of: camera.status, initial: true) { _, status in
             Scoreboard.shared.cameraStatus = status
@@ -79,52 +88,52 @@ struct GameView: View {
         }
     }
 
+    /// Glass controls floating over the camera: menu, match info and camera status.
     private var topBar: some View {
-        HStack(spacing: 10) {
-            Menu {
-                if !camera.isLocked {
-                    Button("Lock board now", systemImage: "lock", action: camera.lockNow)
-                        .disabled(camera.detection.boardToImage == nil)
+        GlassEffectContainer(spacing: 10) {
+            HStack(spacing: 10) {
+                Menu {
+                    if !camera.isLocked {
+                        Button("Lock board now", systemImage: "lock", action: camera.lockNow)
+                            .disabled(camera.detection.boardToImage == nil)
+                    }
+                    Button("Recalibrate", systemImage: "scope", action: camera.recalibrate)
+                    Toggle("Debug view", systemImage: "ladybug", isOn: $showDebug)
+                    Divider()
+                    Button("Leave match", systemImage: "house", role: .destructive, action: onLeave)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 44, height: 44)
+                        .glassEffect(.regular.interactive(), in: Circle())
                 }
-                Button("Recalibrate", systemImage: "scope", action: camera.recalibrate)
-                Toggle("Debug view", systemImage: "ladybug", isOn: $showDebug)
-                Divider()
-                Button("Leave match", systemImage: "house", role: .destructive, action: onLeave)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(Soft.slate)
-                    .frame(width: 44, height: 44)
-                    .softFloat(Circle())
-            }
 
-            Text("\(game.config.startingScore)" + (game.config.legs > 1 ? " · Leg \(game.leg)" : "") + " · R\(game.round)")
-                .font(.system(size: 15, weight: .semibold))
-                .monospacedDigit()
-                .foregroundStyle(Soft.slate)
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, 14)
-                .frame(height: 36)
-                .softFloat(Capsule())
-
-            Spacer()
-
-            if !camera.status.isEmpty {
-                Label(camera.status, systemImage: "camera.viewfinder")
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                    .foregroundStyle(Accent.coral.ink)
-                    .padding(.horizontal, 12)
-                    .frame(height: 36)
-                    .background(Accent.coral.tint, in: Capsule())
-            } else if Scoreboard.shared.tvConnected {
-                Image(systemName: "tv")
+                Text("\(game.config.startingScore)" + (game.config.legs > 1 ? " · Leg \(game.leg)" : "") + " · R\(game.round)")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Accent.mint.ink)
-                    .frame(width: 36, height: 36)
-                    .background(Accent.mint.tint, in: Circle())
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .glassEffect(.regular, in: Capsule())
+
+                Spacer()
+
+                if !camera.status.isEmpty {
+                    Label(camera.status, systemImage: "camera.viewfinder")
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .padding(.horizontal, 14)
+                        .frame(height: 44)
+                        .glassEffect(.regular.tint(Accent.coral.solid.opacity(0.55)), in: Capsule())
+                } else if Scoreboard.shared.tvConnected {
+                    Image(systemName: "tv")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .glassEffect(.regular.tint(Accent.mint.solid.opacity(0.55)), in: Circle())
+                }
             }
         }
     }
@@ -132,22 +141,25 @@ struct GameView: View {
 
 // MARK: - Players
 
-/// Compact score cards for every player, like the React app's compact `ScoreDisplay`.
+/// Glass score cards for every player, like the React app's compact `ScoreDisplay`.
+/// The current player's card is tinted with their seat colour (red on a bust).
 private struct PlayerStrip: View {
     let game: X01Game
 
     var body: some View {
-        HStack(spacing: 8) {
-            ForEach(Array(game.players.enumerated()), id: \.element.id) { i, player in
-                PlayerCard(
-                    player: player,
-                    accent: Accent.slot(i),
-                    isCurrent: i == game.currentPlayerIndex && !game.isFinished,
-                    isBust: i == game.currentPlayerIndex && game.isBust,
-                    dartsInVisit: game.visitDarts.count,
-                    checkout: i == game.currentPlayerIndex ? game.checkoutHint : nil,
-                    showLegs: game.config.legs > 1
-                )
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(Array(game.players.enumerated()), id: \.element.id) { i, player in
+                    PlayerCard(
+                        player: player,
+                        accent: Accent.slot(i),
+                        isCurrent: i == game.currentPlayerIndex && !game.isFinished,
+                        isBust: i == game.currentPlayerIndex && game.isBust,
+                        dartsInVisit: game.visitDarts.count,
+                        checkout: i == game.currentPlayerIndex ? game.checkoutHint : nil,
+                        showLegs: game.config.legs > 1
+                    )
+                }
             }
         }
     }
@@ -167,53 +179,50 @@ private struct PlayerCard: View {
             SoftAvatar(name: player.name, size: 28, accent: accent)
             Text(player.name)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(isCurrent ? Soft.slate : Soft.slateSoft)
                 .lineLimit(1)
             if showLegs {
                 Text("Legs \(player.legsWon)")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Soft.subtle)
+                    .foregroundStyle(.secondary)
             }
             Text("\(player.scoreLeft)")
                 .font(.system(size: 30, weight: .semibold))
                 .monospacedDigit()
                 .displayTracking()
                 .contentTransition(.numericText())
-                .foregroundStyle(isCurrent ? Soft.slate : Soft.slateSoft)
             Text(checkout.map { "Out: \($0)" } ?? "Avg \(player.threeDartAverage.map { String(format: "%.1f", $0) } ?? "0")")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(checkout != nil ? accent.ink : Soft.subtle)
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
             if isCurrent {
                 HStack(spacing: 4) {
                     ForEach(0..<3, id: \.self) { i in
                         Circle()
-                            .fill(i < dartsInVisit ? accent.solid : Soft.track)
+                            .fill(i < dartsInVisit ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
                             .frame(width: 6, height: 6)
                     }
                 }
             }
         }
+        .foregroundStyle(isCurrent ? .primary : .secondary)
         .padding(.horizontal, 8)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(.white.opacity(isCurrent ? 1 : 0.78))
-                .shadow(color: Soft.shadow.opacity(isCurrent ? 0.18 : 0), radius: 12, y: 8)
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(isBust ? Soft.danger : accent.solid, lineWidth: isCurrent ? 2 : 0)
-        )
+        .glassEffect(glass, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.scoreLeft)
+    }
+
+    private var glass: Glass {
+        if isBust { return .regular.tint(Soft.danger.opacity(0.6)) }
+        if isCurrent { return .regular.tint(accent.solid.opacity(0.55)) }
+        return .regular
     }
 }
 
 // MARK: - Visit
 
-/// The current visit: three darts (tap to correct), the visit score, checkout, undo and next.
+/// The current visit: three glass darts (tap to correct), the visit score and checkout, undo and next.
 private struct VisitPanel: View {
     let match: MatchController
 
@@ -222,51 +231,58 @@ private struct VisitPanel: View {
     private var game: X01Game { match.game }
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                ForEach(0..<3, id: \.self) { i in
-                    DartCell(score: i < match.visit.count ? match.visit[i].score : nil) {
-                        // Empty slots can be filled in order, for darts the camera missed.
-                        if i <= match.visit.count { edit(i) }
+        GlassEffectContainer(spacing: 10) {
+            VStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    ForEach(0..<3, id: \.self) { i in
+                        DartCell(score: i < match.visit.count ? match.visit[i].score : nil) {
+                            // Empty slots can be filled in order, for darts the camera missed.
+                            if i <= match.visit.count { edit(i) }
+                        }
                     }
                 }
-            }
 
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(statusLine)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(game.isBust ? Soft.danger : Soft.subtle)
-                    Text(game.isBust ? "BUST" : "\(game.visitScore)")
-                        .font(.system(size: 30, weight: .semibold))
-                        .monospacedDigit()
-                        .displayTracking()
-                        .contentTransition(.numericText())
-                        .foregroundStyle(game.isBust ? Soft.danger : Soft.slate)
-                }
-                Spacer()
-                Button(action: match.undo) {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(match.canUndo ? Soft.slate : Soft.subtle)
-                        .frame(width: 52, height: 52)
-                        .softFloat(Circle())
-                }
-                .buttonStyle(SoftPressStyle())
-                .disabled(!match.canUndo)
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(statusLine)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Text(game.isBust ? "BUST" : "\(game.visitScore)")
+                            .font(.system(size: 30, weight: .semibold))
+                            .monospacedDigit()
+                            .displayTracking()
+                            .contentTransition(.numericText())
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                    .glassEffect(
+                        game.isBust ? .regular.tint(Soft.danger.opacity(0.6)) : .regular,
+                        in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    )
 
-                Button(action: match.nextVisit) {
-                    Label("Next", systemImage: "chevron.right")
-                        .labelStyle(.titleAndIcon)
-                        .padding(.horizontal, 22)
+                    Button(action: match.undo) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 18, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .disabled(!match.canUndo)
+
+                    Button(action: match.nextVisit) {
+                        Label("Next", systemImage: "chevron.right")
+                            .font(.system(size: 17, weight: .semibold))
+                            .padding(.horizontal, 8)
+                            .frame(height: 44)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .tint(Soft.charcoal)
+                    .disabled(game.isFinished)
                 }
-                .buttonStyle(SoftPrimaryButtonStyle(height: 52))
-                .fixedSize()
-                .disabled(game.isFinished)
             }
         }
-        .padding(10)
-        .softShell()
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: match.visit)
     }
 
@@ -280,7 +296,8 @@ private struct VisitPanel: View {
     }
 }
 
-/// One dart of the visit, coloured like the React app's tap grid: doubles mint, trebles coral, bull dark.
+/// One dart of the visit as interactive glass, tinted like the React app's tap grid:
+/// doubles mint, trebles coral, bull red, 25 dark, singles clear.
 private struct DartCell: View {
     let score: BoardScore?
     let action: () -> Void
@@ -297,35 +314,21 @@ private struct DartCell: View {
                         .opacity(0.7)
                 }
             }
-            .foregroundStyle(foreground)
+            .foregroundStyle(score == nil ? .secondary : .primary)
             .frame(maxWidth: .infinity, minHeight: 58)
-            .background {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(background)
-                    .shadow(color: Soft.shadow.opacity(score == nil ? 0 : 0.08), radius: 3, y: 1)
-            }
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .glassEffect(glass.interactive(), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .buttonStyle(SoftPressStyle())
+        .buttonStyle(.plain)
     }
 
-    private var background: Color {
+    private var glass: Glass {
         switch score?.ring {
-        case .double: Accent.mint.tint
-        case .treble: Accent.coral.tint
-        case .outerBull: Soft.charcoal
-        case .bull: Soft.danger
-        case .single: .white
-        case .miss, nil: Soft.track
-        }
-    }
-
-    private var foreground: Color {
-        switch score?.ring {
-        case .double: Accent.mint.ink
-        case .treble: Accent.coral.ink
-        case .outerBull, .bull: .white
-        case .single: Soft.slate
-        case .miss, nil: Soft.subtle
+        case .double: .regular.tint(Accent.mint.solid.opacity(0.6))
+        case .treble: .regular.tint(Accent.coral.solid.opacity(0.6))
+        case .bull: .regular.tint(Soft.danger.opacity(0.7))
+        case .outerBull: .regular.tint(Soft.charcoal.opacity(0.7))
+        case .single, .miss, nil: .regular
         }
     }
 }
@@ -406,3 +409,16 @@ private struct WinnerCard: View {
         }
     }
 }
+/*
+#Preview("Mid-visit") {
+    GameView(match: .preview(), onLeave: {}, onRematch: {}, onFinish: {}, backdrop: Image("PreviewBoard"))
+}
+
+#Preview("Bust") {
+    GameView(match: .preview(bust: true), onLeave: {}, onRematch: {}, onFinish: {}, backdrop: Image("PreviewBoard"))
+}
+
+#Preview("Winner") {
+    GameView(match: .preview(finished: true), onLeave: {}, onRematch: {}, onFinish: {}, backdrop: Image("PreviewBoard"))
+}
+*/

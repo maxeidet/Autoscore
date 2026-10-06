@@ -5,13 +5,14 @@
 
 import SwiftUI
 
-/// Full-screen TV scoreboard: every player's remaining score, the current visit, checkout and match banners.
+/// Full-screen TV scoreboard in the app's light soft style: every player's remaining score, the current visit,
+/// checkout and match banners.
 struct ScoreboardView: View {
     let model: Scoreboard
 
     var body: some View {
         ZStack {
-            Color(hex: 0x0E1116).ignoresSafeArea()
+            Soft.canvas.ignoresSafeArea()
 
             if let match = model.match {
                 matchView(match)
@@ -19,10 +20,10 @@ struct ScoreboardView: View {
                 VStack(spacing: 24) {
                     Text("DARTIFY")
                         .font(.system(size: 96, weight: .black))
-                        .foregroundStyle(Accent.mint.solid)
+                        .foregroundStyle(Accent.mint.ink)
                     Text("Start a match on your iPhone")
                         .font(.system(size: 40, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(Soft.slateSoft)
                 }
             }
         }
@@ -33,15 +34,18 @@ struct ScoreboardView: View {
             HStack(alignment: .firstTextBaseline, spacing: 20) {
                 Text("DARTIFY")
                     .font(.system(size: 36, weight: .black))
-                    .foregroundStyle(Accent.mint.solid)
+                    .foregroundStyle(Accent.mint.ink)
                 Text(match.title)
                     .font(.system(size: 32, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(Soft.subtle)
                 Spacer()
                 if !model.cameraStatus.isEmpty {
                     Label(model.cameraStatus, systemImage: "camera.viewfinder")
                         .font(.system(size: 30, weight: .semibold))
-                        .foregroundStyle(Accent.coral.solid)
+                        .foregroundStyle(Accent.coral.ink)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 10)
+                        .background(Accent.coral.tint, in: Capsule())
                 }
             }
 
@@ -61,10 +65,10 @@ struct ScoreboardView: View {
                         .font(.system(size: 96, weight: .heavy, design: .rounded))
                         .monospacedDigit()
                         .contentTransition(.numericText())
-                        .foregroundStyle(match.isBust ? Soft.danger : .white)
+                        .foregroundStyle(match.isBust ? Soft.danger : Soft.slate)
                     Text(match.checkout.map { "↳ \($0)" } ?? " ")
                         .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(Accent.slot(match.currentIndex).solid)
+                        .foregroundStyle(Accent.slot(match.currentIndex).ink)
                 }
                 .frame(width: 360, alignment: .leading)
             }
@@ -78,7 +82,7 @@ struct ScoreboardView: View {
                     .padding(.horizontal, 80)
                     .padding(.vertical, 36)
                     .background(bannerColor(match), in: Capsule())
-                    .shadow(radius: 40)
+                    .shadow(color: Soft.shadow.opacity(0.3), radius: 40, y: 20)
                     .transition(.scale.combined(with: .opacity))
             }
         }
@@ -105,17 +109,17 @@ private struct PlayerColumn: View {
                     .font(.system(size: 30, weight: .bold))
                     .foregroundStyle(accent.ink)
                     .frame(width: 56, height: 56)
-                    .background(accent.tint, in: Circle())
+                    .background(isCurrent ? .white : accent.tint, in: Circle())
                 Text(player.name)
                     .font(.system(size: 38, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Soft.slate)
                     .lineLimit(1)
             }
             Text("\(player.scoreLeft)")
                 .font(.system(size: isCurrent ? 170 : 120, weight: .heavy, design: .rounded))
                 .monospacedDigit()
                 .contentTransition(.numericText())
-                .foregroundStyle(isCurrent ? .white : .white.opacity(0.55))
+                .foregroundStyle(isCurrent ? Soft.slate : Soft.slateSoft)
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
             HStack(spacing: 28) {
@@ -124,14 +128,15 @@ private struct PlayerColumn: View {
             }
             .font(.system(size: 28, weight: .semibold))
             .monospacedDigit()
-            .foregroundStyle(.white.opacity(0.5))
+            .foregroundStyle(Soft.subtle)
         }
         .padding(30)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(
-            isCurrent ? accent.solid.opacity(0.18) : .white.opacity(0.04),
-            in: RoundedRectangle(cornerRadius: 36, style: .continuous)
-        )
+        .background {
+            RoundedRectangle(cornerRadius: 36, style: .continuous)
+                .fill(isCurrent ? accent.tint : .white)
+                .softShadow(near: 0.04, far: isCurrent ? 0.16 : 0.08, radius: 24, y: 14)
+        }
         .overlay(
             RoundedRectangle(cornerRadius: 36, style: .continuous)
                 .stroke(accent.solid, lineWidth: isCurrent ? 5 : 0)
@@ -147,24 +152,39 @@ private struct DartCard: View {
         VStack(spacing: 8) {
             Text(score?.label ?? "–")
                 .font(.system(size: 80, weight: .heavy, design: .rounded))
-                .foregroundStyle(score == nil ? .white.opacity(0.25) : .white)
             Text(score.map { "\($0.points)" } ?? " ")
                 .font(.system(size: 30, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.6))
+                .opacity(0.7)
         }
+        .foregroundStyle(foreground)
         .monospacedDigit()
         .frame(maxWidth: .infinity, minHeight: 190)
-        .background(color.opacity(score == nil ? 0.06 : 0.3), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).stroke(color.opacity(0.8), lineWidth: score == nil ? 0 : 3))
+        .background {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(background)
+                .softShadow(near: 0.04, far: score == nil ? 0 : 0.10, radius: 18, y: 10)
+        }
     }
 
-    /// Board colours: trebles and the bull red, doubles and 25 green, singles neutral.
-    private var color: Color {
+    /// Same colours as the phone's dart boxes: doubles mint, trebles coral, bull red, 25 dark, singles white.
+    private var background: Color {
         switch score?.ring {
-        case .treble, .bull: Soft.danger
-        case .double, .outerBull: Accent.mint.solid
-        case .miss: .gray
-        default: .white
+        case .double: Accent.mint.tint
+        case .treble: Accent.coral.tint
+        case .bull: Soft.danger
+        case .outerBull: Soft.charcoal
+        case .single: .white
+        case .miss, nil: Soft.track
+        }
+    }
+
+    private var foreground: Color {
+        switch score?.ring {
+        case .double: Accent.mint.ink
+        case .treble: Accent.coral.ink
+        case .bull, .outerBull: .white
+        case .single: Soft.slate
+        case .miss, nil: Soft.subtle
         }
     }
 }

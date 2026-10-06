@@ -20,6 +20,8 @@ final class Announcer {
         try? AVAudioSession.sharedInstance().setActive(true)
         if interrupt { synthesizer.stopSpeaking(at: .word) }
         let utterance = AVSpeechUtterance(string: text)
+        // Always English (British, like a darts caller), whatever language the phone is set to.
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
         utterance.rate = 0.5
         synthesizer.speak(utterance)
     }
