@@ -12,10 +12,15 @@ final class Scoreboard {
 
     struct Player: Equatable {
         var name: String
-        var scoreLeft: Int
-        var legsWon: Int
-        var average: Double?
+        /// The big number: score left in X01, the player's number in Killer.
+        var value: String
+        /// Small line under it, e.g. "Legs 1 · Avg 58.4" or "2 / 3".
+        var detail: String
         var seat: Int
+        /// Killer only: points towards becoming a killer (nil when out or not Killer).
+        var killerPoints: Int? = nil
+        var isKiller = false
+        var isOut = false
     }
 
     struct Match: Equatable {
@@ -23,10 +28,11 @@ final class Scoreboard {
         var players: [Player]
         var currentIndex: Int
         var visit: [BoardScore]
-        var visitScore: Int
+        /// Visit total in X01, the current player's points in Killer.
+        var visitHeadline: String
         var isBust: Bool
-        var checkout: String?
-        var showLegs: Bool
+        /// Checkout route in X01.
+        var hint: String?
         /// Big message such as "BUST", "Leg – Max" or "Max wins".
         var banner: String?
         var winner: String?

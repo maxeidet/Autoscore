@@ -7,8 +7,14 @@
 
 import SwiftUI
 
+enum SetupMode: String, Identifiable {
+    case x01, killer
+    var id: String { rawValue }
+}
+
 struct MatchSetupSheet: View {
-    let start: (X01Config, [SavedPlayer]) -> Void
+    let mode: SetupMode
+    let start: (MatchSettings, [SavedPlayer]) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var store = LocalStore.shared
@@ -25,6 +31,12 @@ struct MatchSetupSheet: View {
     private var config: X01Config {
         X01Config(startingScore: startingScore, doubleOut: doubleOut, doubleIn: doubleIn, legs: bestOf ? legs : 1)
     }
+
+    private var settings: MatchSettings {
+        mode == .x01 ? .x01(config) : .killer(KillerConfig())
+    }
+
+    private var playerRange: ClosedRange<Int> { mode == .x01 ? 1...4 : 2...6 }
 
     private var remaining: Int { numPlayers - selected.count }
 
@@ -55,7 +67,7 @@ struct MatchSetupSheet: View {
     /// Floats over the scrolling cards, pinned to the bottom; the cards fade out beneath it.
     private var startButton: some View {
         Button {
-            start(config, selected)
+            start(settings, selected)
             dismiss()
         } label: {
             Label(remaining == 0 ? "Start match" : "Pick \(remaining) more \(remaining == 1 ? "player" : "players")",
@@ -78,20 +90,20 @@ struct MatchSetupSheet: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Label("X01", systemImage: "target")
+                Label(mode == .x01 ? "X01" : "Killer", systemImage: mode == .x01 ? "target" : "flame")
                     .font(.system(size: 21, weight: .semibold))
                     .displayTracking()
                     .foregroundStyle(Soft.slateSoft)
                 Spacer()
                 SoftIconButton(systemImage: "xmark", size: 36) { dismiss() }
             }
-            Text(config.headline)
+            Text(mode == .x01 ? config.headline : KillerConfig().headline)
                 .font(.system(size: 28, weight: .semibold))
                 .displayTracking()
                 .foregroundStyle(Soft.slate)
                 .padding(.top, 20)
                 .contentTransition(.numericText())
-            Text("\(bestOf ? "Best of \(legs) legs" : "First to zero wins") · \(numPlayers) \(numPlayers == 1 ? "player" : "players")")
+            Text("\(mode == .x01 ? (bestOf ? "Best of \(legs) legs" : "First to zero wins") : "Last one standing wins") · \(numPlayers) \(numPlayers == 1 ? "player" : "players")")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(Soft.subtle)
                 .padding(.top, 6)
@@ -102,7 +114,40 @@ struct MatchSetupSheet: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: config)
     }
 
+    @ViewBuilder
     private var formatCard: some View {
+        if mode == .killer {
+            killerCard
+        } else {
+            x01Card
+        }
+    }
+
+    private var killerCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionLabel(systemImage: "slider.horizontal.3", title: "Format")
+            Field(label: "Players") {
+                SoftSegmented(options: playerRange.map { ($0, "\($0)") }, selection: $numPlayers)
+            }
+            .onChange(of: numPlayers) { _, n in
+                if selected.count > n { selected = Array(selected.prefix(n)) }
+            }
+
+            Divider().overlay(Soft.line)
+
+            VStack(alignment: .leading, spacing: 12) {
+                RuleRow(systemImage: "number", text: "Everyone gets a random number from 1 to 20.")
+                RuleRow(systemImage: "arrow.up.circle", text: "Hit your number to score: single 1, double 2, treble 3. Reach 3 to become a killer 💀.")
+                RuleRow(systemImage: "arrow.uturn.down.circle", text: "Past 3 you count back down, so a killer hitting their own number loses points.")
+                RuleRow(systemImage: "scope", text: "Killers hit other players' numbers to take 1, 2 or 3 points.")
+                RuleRow(systemImage: "xmark.octagon", text: "Below 0 you're out. Last one standing wins.")
+            }
+        }
+        .padding(20)
+        .softCard()
+    }
+
+    private var x01Card: some View {
         VStack(alignment: .leading, spacing: 16) {
             SectionLabel(systemImage: "slider.horizontal.3", title: "Format")
 
@@ -110,7 +155,7 @@ struct MatchSetupSheet: View {
                 SoftSegmented(options: [301, 501, 701].map { ($0, "\($0)") }, selection: $startingScore)
             }
             Field(label: "Players") {
-                SoftSegmented(options: (1...4).map { ($0, "\($0)") }, selection: $numPlayers)
+                SoftSegmented(options: playerRange.map { ($0, "\($0)") }, selection: $numPlayers)
             }
             .onChange(of: numPlayers) { _, n in
                 if selected.count > n { selected = Array(selected.prefix(n)) }
@@ -235,6 +280,24 @@ private struct PlayerChip: View {
         }
         .buttonStyle(SoftPressStyle())
         .disabled(disabled)
+    }
+}
+
+private struct RuleRow: View {
+    let systemImage: String
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Image(systemName: systemImage)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Accent.coral.ink)
+                .frame(width: 20)
+            Text(text)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Soft.slateSoft)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

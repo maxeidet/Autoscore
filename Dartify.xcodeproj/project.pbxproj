@@ -253,11 +253,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Dartify/Preview Content\"";
 				DEVELOPMENT_TEAM = RV5PUD6KKM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Dartify-Info.plist";
-				DEVELOPMENT_ASSET_PATHS = "\"Dartify/Preview Content\"";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Dartify uses the camera to detect your dartboard and score throws.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -287,11 +287,11 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Dartify/Preview Content\"";
 				DEVELOPMENT_TEAM = RV5PUD6KKM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Dartify-Info.plist";
-				DEVELOPMENT_ASSET_PATHS = "\"Dartify/Preview Content\"";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Dartify uses the camera to detect your dartboard and score throws.";
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

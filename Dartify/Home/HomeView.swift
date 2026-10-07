@@ -11,14 +11,14 @@ struct HomeView: View {
     @State private var store = LocalStore.shared
     @State private var match: MatchController?
     @State private var showingGame = false
-    @State private var showingSetup = false
+    @State private var setupMode: SetupMode?
     @State private var appeared = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 header.rise(0, appeared)
-                if let match, !match.game.isFinished {
+                if let match, !match.isFinished {
                     ResumeCard(match: match, resume: { showingGame = true }, discard: { self.match = nil })
                         .rise(1, appeared)
                 }
@@ -35,9 +35,9 @@ struct HomeView: View {
         }
         .background(Soft.canvas.ignoresSafeArea())
         .onAppear { appeared = true }
-        .sheet(isPresented: $showingSetup) {
-            MatchSetupSheet { config, players in
-                match = MatchController(config: config, players: players)
+        .sheet(item: $setupMode) { mode in
+            MatchSetupSheet(mode: mode) { settings, players in
+                match = MatchController(settings: settings, players: players)
                 showingGame = true
             }
         }
@@ -46,7 +46,7 @@ struct HomeView: View {
                 GameView(
                     match: match,
                     onLeave: { showingGame = false },
-                    onRematch: { self.match = MatchController(config: match.config, players: match.roster) },
+                    onRematch: { self.match = MatchController(settings: match.settings, players: match.roster) },
                     onFinish: {
                         showingGame = false
                         self.match = nil
@@ -146,14 +146,17 @@ struct HomeView: View {
                 .padding(.bottom, 8)
 
             ModeRow(systemImage: "scope", accent: .mint, title: "X01", subtitle: "301 · 501 · 701", badge: "Classic") {
-                showingSetup = true
+                setupMode = .x01
+            }
+            ModeRow(systemImage: "flame.fill", accent: .coral, title: "Killer", subtitle: "Reach 3, then hunt the others", badge: "Party") {
+                setupMode = .killer
             }
             ModeRow(systemImage: "clock", accent: .azure, title: "Around the Clock", subtitle: "Hit 1 to 20 in order", badge: "Soon")
             ModeRow(systemImage: "globe", accent: .orchid, title: "Round the World", subtitle: "Points on every number", badge: "Soon")
             ModeRow(systemImage: "list.bullet.rectangle", accent: .coral, title: "Cricket", subtitle: "Close out 15 to 20 and bull", badge: "Soon")
 
             Button {
-                showingSetup = true
+                setupMode = .x01
             } label: {
                 Label("New match", systemImage: "plus")
             }
@@ -216,7 +219,6 @@ private struct ResumeCard: View {
     let discard: () -> Void
 
     var body: some View {
-        let game = match.game
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 HStack(spacing: 6) {
@@ -229,7 +231,7 @@ private struct ResumeCard: View {
                 .frame(height: 28)
                 .background(Accent.mint.tint, in: Capsule())
                 Spacer()
-                Text("Round \(game.round)")
+                Text(match.title)
                     .font(.system(size: 15, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(Soft.subtle)
@@ -243,11 +245,11 @@ private struct ResumeCard: View {
 
             HStack(spacing: 12) {
                 HStack(spacing: -8) {
-                    ForEach(Array(game.players.prefix(4).enumerated()), id: \.element.id) { i, player in
-                        SoftAvatar(name: player.name, size: 30, accent: Accent.slot(i))
+                    ForEach(Array(match.state.playerNames.prefix(4).enumerated()), id: \.offset) { i, name in
+                        SoftAvatar(name: name, size: 30, accent: Accent.slot(i))
                     }
                 }
-                Text(game.players.map { "\($0.name) \($0.scoreLeft)" }.joined(separator: " · "))
+                Text(match.playerSummaries.joined(separator: " · "))
                     .font(.system(size: 15, weight: .medium))
                     .monospacedDigit()
                     .foregroundStyle(Soft.slateSoft)

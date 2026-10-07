@@ -51,7 +51,7 @@ struct ScoreboardView: View {
 
             HStack(spacing: 28) {
                 ForEach(Array(match.players.enumerated()), id: \.offset) { i, player in
-                    PlayerColumn(player: player, isCurrent: i == match.currentIndex && match.winner == nil, showLegs: match.showLegs)
+                    PlayerColumn(player: player, isCurrent: i == match.currentIndex && match.winner == nil)
                 }
             }
             .frame(maxHeight: .infinity)
@@ -61,12 +61,14 @@ struct ScoreboardView: View {
                     DartCard(score: i < match.visit.count ? match.visit[i] : nil)
                 }
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(match.isBust ? "BUST" : "\(match.visitScore)")
+                    Text(match.visitHeadline)
                         .font(.system(size: 96, weight: .heavy, design: .rounded))
+                        .minimumScaleFactor(0.5)
+                        .lineLimit(1)
                         .monospacedDigit()
                         .contentTransition(.numericText())
                         .foregroundStyle(match.isBust ? Soft.danger : Soft.slate)
-                    Text(match.checkout.map { "↳ \($0)" } ?? " ")
+                    Text(match.hint.map { "↳ \($0)" } ?? " ")
                         .font(.system(size: 34, weight: .bold, design: .rounded))
                         .foregroundStyle(Accent.slot(match.currentIndex).ink)
                 }
@@ -99,11 +101,13 @@ struct ScoreboardView: View {
 private struct PlayerColumn: View {
     let player: Scoreboard.Player
     let isCurrent: Bool
-    let showLegs: Bool
 
     var body: some View {
         let accent = Accent.slot(player.seat)
         VStack(spacing: 18) {
+            if player.isKiller {
+                KillerBadge(size: 44)
+            }
             HStack(spacing: 14) {
                 Text(String(player.name.prefix(1)).uppercased())
                     .font(.system(size: 30, weight: .bold))
@@ -115,31 +119,40 @@ private struct PlayerColumn: View {
                     .foregroundStyle(Soft.slate)
                     .lineLimit(1)
             }
-            Text("\(player.scoreLeft)")
+            Text(player.value)
                 .font(.system(size: isCurrent ? 170 : 120, weight: .heavy, design: .rounded))
                 .monospacedDigit()
                 .contentTransition(.numericText())
                 .foregroundStyle(isCurrent ? Soft.slate : Soft.slateSoft)
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
-            HStack(spacing: 28) {
-                if showLegs { Text("Legs \(player.legsWon)") }
-                Text("Avg \(player.average.map { String(format: "%.1f", $0) } ?? "–")")
+            if let points = player.killerPoints {
+                KillerPips(points: points, size: 26, filled: player.isKiller ? Soft.danger : accent.solid)
             }
-            .font(.system(size: 28, weight: .semibold))
-            .monospacedDigit()
-            .foregroundStyle(Soft.subtle)
+            Text(player.detail)
+                .font(.system(size: 28, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(Soft.subtle)
+        }
+        .opacity(player.isOut ? 0.35 : 1)
+        .overlay {
+            if player.isOut {
+                Text("OUT")
+                    .font(.system(size: 64, weight: .black, design: .rounded))
+                    .foregroundStyle(Soft.danger)
+                    .rotationEffect(.degrees(-12))
+            }
         }
         .padding(30)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
             RoundedRectangle(cornerRadius: 36, style: .continuous)
-                .fill(isCurrent ? accent.tint : .white)
+                .fill(player.isKiller ? Soft.danger.opacity(0.12) : isCurrent ? accent.tint : .white)
                 .softShadow(near: 0.04, far: isCurrent ? 0.16 : 0.08, radius: 24, y: 14)
         }
         .overlay(
             RoundedRectangle(cornerRadius: 36, style: .continuous)
-                .stroke(accent.solid, lineWidth: isCurrent ? 5 : 0)
+                .stroke(player.isKiller ? Soft.danger : accent.solid, lineWidth: isCurrent ? 5 : player.isKiller ? 3 : 0)
         )
         .scaleEffect(isCurrent ? 1 : 0.96)
     }
@@ -189,21 +202,41 @@ private struct DartCard: View {
     }
 }
 
-#Preview(traits: .landscapeLeft) {
+#Preview("X01", traits: .landscapeLeft) {
     let model = Scoreboard()
     model.match = .init(
-        title: "501 · Best of 3",
+        title: "501 · Leg 2 · R4",
         players: [
-            .init(name: "Max", scoreLeft: 141, legsWon: 1, average: 58.4, seat: 0),
-            .init(name: "Anna", scoreLeft: 236, legsWon: 0, average: 47.1, seat: 1),
-            .init(name: "Leo", scoreLeft: 301, legsWon: 0, average: 39.0, seat: 2),
+            .init(name: "Max", value: "141", detail: "Legs 1 · Avg 58.4", seat: 0),
+            .init(name: "Anna", value: "236", detail: "Legs 0 · Avg 47.1", seat: 1),
+            .init(name: "Leo", value: "301", detail: "Legs 0 · Avg 39.0", seat: 2),
         ],
         currentIndex: 0,
         visit: [BoardScore(ring: .treble, number: 20)],
-        visitScore: 60,
+        visitHeadline: "60",
         isBust: false,
-        checkout: "T20 T19 D12",
-        showLegs: true,
+        hint: "T19 D12",
+        banner: nil,
+        winner: nil
+    )
+    return ScoreboardView(model: model)
+}
+
+#Preview("Killer", traits: .landscapeLeft) {
+    let model = Scoreboard()
+    model.match = .init(
+        title: "Killer · R3",
+        players: [
+            .init(name: "Max", value: "7", detail: "1 / 3", seat: 0, killerPoints: 1),
+            .init(name: "Anna", value: "12", detail: "3 / 3", seat: 1, killerPoints: 3, isKiller: true),
+            .init(name: "Leo", value: "20", detail: "Out", seat: 2, isOut: true),
+            .init(name: "Sara", value: "5", detail: "0 / 3", seat: 3, killerPoints: 0),
+        ],
+        currentIndex: 3,
+        visit: [BoardScore(ring: .double, number: 5)],
+        visitHeadline: "2 / 3",
+        isBust: false,
+        hint: nil,
         banner: nil,
         winner: nil
     )

@@ -23,8 +23,6 @@ struct GameView: View {
     @State private var showDebug = false
     @State private var editing: DartSlot?
 
-    private var game: X01Game { match.game }
-
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
@@ -44,7 +42,10 @@ struct GameView: View {
 
             VStack(spacing: 10) {
                 topBar
-                PlayerStrip(game: game)
+                switch match.state {
+                case .x01(let game): PlayerStrip(game: game)
+                case .killer(let game): KillerStrip(game: game)
+                }
                 Spacer()
                 if showDebug {
                     DebugPanel(debug: camera.isLocked ? camera.dartState?.debug ?? DetectionDebug() : camera.detection.debug)
@@ -54,9 +55,9 @@ struct GameView: View {
             .padding(.horizontal, 12)
             .padding(.bottom, 4)
 
-            if game.isFinished {
+            if let summary = match.winnerSummary {
                 WinnerCard(
-                    game: game,
+                    summary: summary,
                     undo: match.undo,
                     rematch: { match.recordIfFinished(); onRematch() },
                     home: { match.recordIfFinished(); onFinish() }
@@ -64,7 +65,7 @@ struct GameView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: game.isFinished)
+        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: match.isFinished)
         .sheet(item: $editing, onDismiss: camera.endEditing) { slot in
             DartEditor(
                 slot: slot.index,
@@ -109,7 +110,7 @@ struct GameView: View {
                         .glassEffect(.regular.interactive(), in: Circle())
                 }
 
-                Text("\(game.config.startingScore)" + (game.config.legs > 1 ? " · Leg \(game.leg)" : "") + " · R\(game.round)")
+                Text(match.title)
                     .font(.system(size: 15, weight: .semibold))
                     .monospacedDigit()
                     .lineLimit(1)
@@ -220,6 +221,96 @@ private struct PlayerCard: View {
     }
 }
 
+// MARK: - Killer players
+
+/// Glass cards for a Killer game: each player's number, points towards killer, 💀 for killers, OUT when out.
+private struct KillerStrip: View {
+    let game: KillerGame
+
+    var body: some View {
+        GlassEffectContainer(spacing: 8) {
+            // Up to four cards in a row, a second row for five or six players.
+            let rows = game.players.count > 4
+                ? [Array(game.players.indices.prefix(3)), Array(game.players.indices.dropFirst(3))]
+                : [Array(game.players.indices)]
+            VStack(spacing: 8) {
+                ForEach(rows, id: \.self) { row in
+                    HStack(spacing: 8) {
+                        ForEach(row, id: \.self) { i in
+                            KillerCard(
+                                player: game.players[i],
+                                accent: Accent.slot(i),
+                                isCurrent: i == game.currentPlayerIndex && !game.isFinished,
+                                dartsInVisit: game.visitDarts.count
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct KillerCard: View {
+    let player: KillerPlayer
+    let accent: Accent
+    let isCurrent: Bool
+    let dartsInVisit: Int
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .topTrailing) {
+                SoftAvatar(name: player.name, size: 28, accent: accent)
+                if player.isKiller {
+                    KillerBadge(size: 13)
+                        .offset(x: 16, y: -8)
+                }
+            }
+            Text(player.name)
+                .font(.system(size: 12, weight: .semibold))
+                .strikethrough(player.isOut)
+                .lineLimit(1)
+            Text("\(player.number)")
+                .font(.system(size: 30, weight: .semibold))
+                .monospacedDigit()
+                .displayTracking()
+            if player.isOut {
+                Text("OUT")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(Soft.danger)
+            } else if player.isKiller {
+                Text("KILLER")
+                    .font(.system(size: 11, weight: .black))
+                    .foregroundStyle(Soft.danger)
+            } else {
+                KillerPips(points: player.points, filled: accent.solid)
+            }
+            if isCurrent {
+                HStack(spacing: 4) {
+                    ForEach(0..<3, id: \.self) { i in
+                        Circle()
+                            .fill(i < dartsInVisit ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                            .frame(width: 6, height: 6)
+                    }
+                }
+            }
+        }
+        .foregroundStyle(isCurrent ? .primary : .secondary)
+        .opacity(player.isOut ? 0.45 : 1)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .glassEffect(glass, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.points)
+    }
+
+    private var glass: Glass {
+        if player.isKiller { return .regular.tint(Soft.danger.opacity(isCurrent ? 0.6 : 0.35)) }
+        if isCurrent { return .regular.tint(accent.solid.opacity(0.55)) }
+        return .regular
+    }
+}
+
 // MARK: - Visit
 
 /// The current visit: three glass darts (tap to correct), the visit score and checkout, undo and next.
@@ -227,8 +318,6 @@ private struct VisitPanel: View {
     let match: MatchController
 
     let edit: (Int) -> Void
-
-    private var game: X01Game { match.game }
 
     var body: some View {
         GlassEffectContainer(spacing: 10) {
@@ -244,12 +333,12 @@ private struct VisitPanel: View {
 
                 HStack(alignment: .center, spacing: 10) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(statusLine)
+                        Text(match.statusLine)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
-                        Text(game.isBust ? "BUST" : "\(game.visitScore)")
+                        Text(match.visitHeadline)
                             .font(.system(size: 30, weight: .semibold))
                             .monospacedDigit()
                             .displayTracking()
@@ -258,7 +347,7 @@ private struct VisitPanel: View {
                     .padding(.horizontal, 16)
                     .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
                     .glassEffect(
-                        game.isBust ? .regular.tint(Soft.danger.opacity(0.6)) : .regular,
+                        match.isBust ? .regular.tint(Soft.danger.opacity(0.6)) : .regular,
                         in: RoundedRectangle(cornerRadius: 22, style: .continuous)
                     )
 
@@ -279,20 +368,11 @@ private struct VisitPanel: View {
                     }
                     .buttonStyle(.glassProminent)
                     .tint(Soft.charcoal)
-                    .disabled(game.isFinished)
+                    .disabled(match.isFinished)
                 }
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: match.visit)
-    }
-
-    private var statusLine: String {
-        let name = game.currentPlayer.name
-        if let leg = game.legWinnerIndex { return "Leg to \(game.players[leg].name) – pull your darts" }
-        if game.isBust { return "\(name) – pull your darts" }
-        if game.isVisitOver { return "\(name) – pull your darts" }
-        if let hint = game.checkoutHint { return "\(name) · \(game.currentPlayer.scoreLeft) · \(hint)" }
-        return "\(name) · dart \(game.visitDarts.count + 1)"
     }
 }
 
@@ -336,15 +416,13 @@ private struct DartCell: View {
 // MARK: - Winner
 
 private struct WinnerCard: View {
-    let game: X01Game
+    let summary: MatchController.WinnerSummary
     let undo: () -> Void
     let rematch: () -> Void
     let home: () -> Void
 
     var body: some View {
-        let index = game.winnerIndex ?? 0
-        let winner = game.players[index]
-        let accent = Accent.slot(index)
+        let accent = Accent.slot(summary.seat)
         ZStack {
             Color(red: 20 / 255, green: 24 / 255, blue: 32 / 255).opacity(0.32)
                 .background(.ultraThinMaterial)
@@ -357,26 +435,26 @@ private struct WinnerCard: View {
                         .foregroundStyle(accent.ink)
                         .frame(width: 60, height: 60)
                         .background(accent.tint, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    Text("\(winner.name) wins.")
+                    Text("\(summary.name) wins.")
                         .font(.system(size: 28, weight: .semibold))
                         .displayTracking()
                         .foregroundStyle(Soft.slate)
                         .padding(.top, 16)
-                    Text("Finished in \(winner.dartsThrown) darts")
+                    Text(summary.subtitle)
                         .font(.system(size: 15))
                         .monospacedDigit()
                         .foregroundStyle(Soft.subtle)
                         .padding(.top, 6)
 
                     HStack(spacing: 0) {
-                        ForEach(Array(game.players.enumerated()), id: \.element.id) { i, player in
+                        ForEach(Array(summary.stats.enumerated()), id: \.offset) { i, stat in
                             VStack(spacing: 4) {
-                                SoftAvatar(name: player.name, size: 28, accent: Accent.slot(i))
-                                Text(player.threeDartAverage.map { String(format: "%.1f", $0) } ?? "–")
+                                SoftAvatar(name: stat.name, size: 28, accent: Accent.slot(i))
+                                Text(stat.value)
                                     .font(.system(size: 17, weight: .semibold))
                                     .monospacedDigit()
                                     .foregroundStyle(Soft.slate)
-                                Text(game.config.legs > 1 ? "\(player.legsWon) legs" : "avg")
+                                Text(stat.label)
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundStyle(Soft.subtle)
                             }
@@ -416,6 +494,10 @@ private struct WinnerCard: View {
 
 #Preview("Bust") {
     GameView(match: .preview(bust: true), onLeave: {}, onRematch: {}, onFinish: {}, backdrop: Image("PreviewBoard"))
+}
+
+#Preview("Killer") {
+    GameView(match: .killerPreview(), onLeave: {}, onRematch: {}, onFinish: {}, backdrop: Image("PreviewBoard"))
 }
 
 #Preview("Winner") {
