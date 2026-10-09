@@ -37,7 +37,7 @@ struct GameView: View {
                     .ignoresSafeArea()
             }
 
-            BoardOverlay(detection: camera.detection, darts: match.visit)
+            LiveBoardOverlay(camera: camera, darts: match.visit)
                 .ignoresSafeArea()
 
             VStack(spacing: 10) {
@@ -48,7 +48,7 @@ struct GameView: View {
                 }
                 Spacer()
                 if showDebug {
-                    DebugPanel(debug: camera.isLocked ? camera.dartState?.debug ?? DetectionDebug() : camera.detection.debug)
+                    LiveDebugPanel(camera: camera)
                 }
                 VisitPanel(match: match, edit: { editing = DartSlot(index: $0) })
             }
@@ -77,9 +77,6 @@ struct GameView: View {
         }
         .task { if backdrop == nil { await camera.start() } }
         .task(id: match.id) { match.attach(camera) }
-        .onChange(of: camera.status, initial: true) { _, status in
-            Scoreboard.shared.cameraStatus = status
-        }
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
@@ -95,8 +92,9 @@ struct GameView: View {
             HStack(spacing: 10) {
                 Menu {
                     if !camera.isLocked {
+                        // No `.disabled` on the board here: that reads `detection`, which changes every frame
+                        // and rebuilds the open menu so taps get lost. `lockNow` ignores it when there's no board.
                         Button("Lock board now", systemImage: "lock", action: camera.lockNow)
-                            .disabled(camera.detection.boardToImage == nil)
                     }
                     Button("Recalibrate", systemImage: "scope", action: camera.recalibrate)
                     Toggle("Debug view", systemImage: "ladybug", isOn: $showDebug)
@@ -121,21 +119,57 @@ struct GameView: View {
 
                 Spacer()
 
-                if !camera.status.isEmpty {
-                    Label(camera.status, systemImage: "camera.viewfinder")
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .padding(.horizontal, 14)
-                        .frame(height: 44)
-                        .glassEffect(.regular.tint(Accent.coral.solid.opacity(0.55)), in: Capsule())
-                } else if Scoreboard.shared.tvConnected {
-                    Image(systemName: "tv")
-                        .font(.system(size: 15, weight: .semibold))
-                        .frame(width: 44, height: 44)
-                        .glassEffect(.regular.tint(Accent.mint.solid.opacity(0.55)), in: Circle())
-                }
+                CameraStatusBadge(camera: camera)
             }
+        }
+    }
+}
+
+// MARK: - Live camera views
+//
+// `camera.detection` changes on every frame. Reading it only inside these small views keeps GameView's body
+// (and the open menu) from re-rendering at frame rate.
+
+private struct LiveBoardOverlay: View {
+    let camera: CameraController
+    let darts: [DetectedDart]
+
+    var body: some View {
+        BoardOverlay(detection: camera.detection, darts: darts)
+    }
+}
+
+private struct LiveDebugPanel: View {
+    let camera: CameraController
+
+    var body: some View {
+        DebugPanel(debug: camera.isLocked ? camera.dartState?.debug ?? DetectionDebug() : camera.detection.debug)
+    }
+}
+
+/// Camera status pill, or the TV icon when the camera is fine. Also mirrors the status to the TV scoreboard.
+private struct CameraStatusBadge: View {
+    let camera: CameraController
+
+    var body: some View {
+        Group {
+            if !camera.status.isEmpty {
+                Label(camera.status, systemImage: "camera.viewfinder")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .glassEffect(.regular.tint(Accent.coral.solid.opacity(0.55)), in: Capsule())
+            } else if Scoreboard.shared.tvConnected {
+                Image(systemName: "tv")
+                    .font(.system(size: 15, weight: .semibold))
+                    .frame(width: 44, height: 44)
+                    .glassEffect(.regular.tint(Accent.mint.solid.opacity(0.55)), in: Circle())
+            }
+        }
+        .onChange(of: camera.status, initial: true) { _, status in
+            Scoreboard.shared.cameraStatus = status
         }
     }
 }
