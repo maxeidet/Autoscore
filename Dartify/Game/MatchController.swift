@@ -177,24 +177,7 @@ final class MatchController: Identifiable {
         return false
     }
 
-    /// Small line above the visit total.
-    var statusLine: String {
-        let name = state.currentPlayerName
-        switch state {
-        case .x01(let g):
-            if let leg = g.legWinnerIndex { return "Leg to \(g.players[leg].name) – pull your darts" }
-            if g.isVisitOver { return "\(name) – pull your darts" }
-            if let hint = g.checkoutHint { return "\(name) · \(g.currentPlayer.scoreLeft) · \(hint)" }
-            return "\(name) · dart \(g.visitDarts.count + 1)"
-        case .killer(let g):
-            if g.isVisitOver { return "\(name) – pull your darts" }
-            let player = g.currentPlayer
-            if player.isKiller { return "\(name) 💀 · hit your rivals' numbers" }
-            return "\(name) · hit \(player.number) to reach \(KillerConfig.killerPoints)"
-        }
-    }
-
-    /// Big text in the visit panel: the visit total in X01, the player's points in Killer.
+    /// Big visit text for the TV scoreboard: the visit total in X01, the player's points in Killer.
     var visitHeadline: String {
         switch state {
         case .x01(let g):

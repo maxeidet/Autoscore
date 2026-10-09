@@ -50,8 +50,8 @@ struct GameView: View {
             VStack(spacing: 10) {
                 topBar
                 switch match.state {
-                case .x01(let game): PlayerStrip(game: game)
-                case .killer(let game): KillerStrip(game: game)
+                case .x01(let game): PlayerStrip(game: game, input: match.input)
+                case .killer(let game): KillerStrip(game: game, input: match.input)
                 }
                 if usesCamera {
                     Spacer()
@@ -197,106 +197,101 @@ private struct CameraStatusBadge: View {
 
 // MARK: - Players
 
-/// Glass score cards for every player, like the React app's compact `ScoreDisplay`.
-/// The current player's card is tinted with their seat colour (red on a bust).
-private struct PlayerStrip: View {
-    let game: X01Game
+/// What the current player should do now, shown as a pill on their turn card.
+private struct TurnHint {
+    var systemImage: String
+    var text: String
+    /// Highlighted, e.g. a checkout route.
+    var emphasis = false
 
-    var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            HStack(spacing: 8) {
-                ForEach(Array(game.players.enumerated()), id: \.element.id) { i, player in
-                    PlayerCard(
-                        player: player,
-                        accent: Accent.slot(i),
-                        isCurrent: i == game.currentPlayerIndex && !game.isFinished,
-                        isBust: i == game.currentPlayerIndex && game.isBust,
-                        dartsInVisit: game.visitDarts.count,
-                        checkout: i == game.currentPlayerIndex ? game.checkoutHint : nil,
-                        showLegs: game.config.legs > 1
-                    )
-                }
-            }
-        }
+    /// The visit is over and waits for the next one: pull the darts (camera) or press Next (tap board).
+    static func visitDone(_ prefix: String, input: ScoringInput) -> TurnHint {
+        TurnHint(systemImage: input == .camera ? "hand.raised" : "chevron.right.circle",
+                 text: "\(prefix) · \(input == .camera ? "pull your darts" : "tap Next")")
     }
 }
 
-private struct PlayerCard: View {
-    let player: X01Player
-    let accent: Accent
-    let isCurrent: Bool
-    let isBust: Bool
-    let dartsInVisit: Int
-    let checkout: String?
-    let showLegs: Bool
+/// X01: a large glass card for the player whose turn it is, then the others in the order they throw next.
+private struct PlayerStrip: View {
+    let game: X01Game
+    let input: ScoringInput
 
     var body: some View {
-        VStack(spacing: 4) {
-            SoftAvatar(name: player.name, size: 28, accent: accent)
-            Text(player.name)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-            if showLegs {
-                Text("Legs \(player.legsWon)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            Text("\(player.scoreLeft)")
-                .font(.system(size: 30, weight: .semibold))
-                .monospacedDigit()
-                .displayTracking()
-                .contentTransition(.numericText())
-            Text(checkout.map { "Out: \($0)" } ?? "Avg \(player.threeDartAverage.map { String(format: "%.1f", $0) } ?? "0")")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            if isCurrent {
-                HStack(spacing: 4) {
-                    ForEach(0..<3, id: \.self) { i in
-                        Circle()
-                            .fill(i < dartsInVisit ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
-                            .frame(width: 6, height: 6)
+        let i = game.currentPlayerIndex
+        let player = game.players[i]
+        let others = upNext(after: i, count: game.players.count)
+
+        GlassEffectContainer(spacing: 8) {
+            VStack(spacing: 8) {
+                TurnCard(
+                    name: player.name,
+                    accent: Accent.slot(i),
+                    score: "\(player.scoreLeft)",
+                    scoreCaption: "to go",
+                    visit: game.isBust ? "BUST" : "\(game.visitScore)",
+                    visitCaption: "this visit",
+                    stats: [("Avg", player.threeDartAverage.map { String(format: "%.1f", $0) } ?? "–"),
+                            ("Darts", "\(player.dartsThrown)")]
+                        + (game.config.legs > 1 ? [("Legs", "\(player.legsWon)")] : []),
+                    hint: hint,
+                    dartsInVisit: game.visitDarts.count,
+                    alert: game.isBust ? Soft.danger : nil
+                )
+                if !others.isEmpty {
+                    WaitingRow {
+                        ForEach(others, id: \.self) { j in
+                            WaitingChip(name: game.players[j].name, accent: Accent.slot(j), value: "\(game.players[j].scoreLeft)")
+                        }
                     }
                 }
             }
         }
-        .foregroundStyle(isCurrent ? .primary : .secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
-        .glassEffect(glass, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.scoreLeft)
     }
 
-    private var glass: Glass {
-        if isBust { return .regular.tint(Soft.danger.opacity(0.6)) }
-        if isCurrent { return .regular.tint(accent.solid.opacity(0.55)) }
-        return .regular
+    /// Nothing while the player is simply throwing; the bars on the card already show the darts.
+    private var hint: TurnHint? {
+        if let leg = game.legWinnerIndex { return .visitDone("Leg to \(game.players[leg].name)", input: input) }
+        if game.isBust { return .visitDone("Bust", input: input) }
+        if game.isVisitOver { return .visitDone("Visit done", input: input) }
+        if let route = game.checkoutHint { return TurnHint(systemImage: "target", text: route, emphasis: true) }
+        return nil
     }
 }
 
-// MARK: - Killer players
-
-/// Glass cards for a Killer game: each player's number, points towards killer, 💀 for killers, OUT when out.
+/// Killer: the same turn card (their number, points and what to hit), then the others.
 private struct KillerStrip: View {
     let game: KillerGame
+    let input: ScoringInput
 
     var body: some View {
+        let i = game.currentPlayerIndex
+        let player = game.players[i]
+        let others = upNext(after: i, count: game.players.count)
+
         GlassEffectContainer(spacing: 8) {
-            // Up to four cards in a row, a second row for five or six players.
-            let rows = game.players.count > 4
-                ? [Array(game.players.indices.prefix(3)), Array(game.players.indices.dropFirst(3))]
-                : [Array(game.players.indices)]
             VStack(spacing: 8) {
-                ForEach(rows, id: \.self) { row in
-                    HStack(spacing: 8) {
-                        ForEach(row, id: \.self) { i in
-                            KillerCard(
-                                player: game.players[i],
-                                accent: Accent.slot(i),
-                                isCurrent: i == game.currentPlayerIndex && !game.isFinished,
-                                dartsInVisit: game.visitDarts.count
+                TurnCard(
+                    name: player.name,
+                    accent: Accent.slot(i),
+                    score: "\(player.number)",
+                    scoreCaption: "your number",
+                    visit: player.isKiller ? "KILLER" : "\(player.points)/\(KillerConfig.killerPoints)",
+                    visitCaption: "points",
+                    stats: [("Taken", "\(player.pointsTaken)"), ("Darts", "\(player.dartsThrown)")],
+                    hint: hint,
+                    dartsInVisit: game.visitDarts.count,
+                    alert: player.isKiller ? Soft.danger : nil,
+                    isKiller: player.isKiller
+                )
+                if !others.isEmpty {
+                    WaitingRow {
+                        ForEach(others, id: \.self) { j in
+                            let p = game.players[j]
+                            WaitingChip(
+                                name: "\(p.name) · \(p.number)",
+                                accent: Accent.slot(j),
+                                value: p.isOut ? "OUT" : p.isKiller ? "💀" : "\(p.points)/\(KillerConfig.killerPoints)",
+                                isOut: p.isOut
                             )
                         }
                     }
@@ -304,127 +299,226 @@ private struct KillerStrip: View {
             }
         }
     }
+
+    private var hint: TurnHint? {
+        let player = game.currentPlayer
+        if game.isVisitOver { return .visitDone("Visit done", input: input) }
+        if player.isKiller { return TurnHint(systemImage: "scope", text: "Hit your rivals' numbers", emphasis: true) }
+        return TurnHint(systemImage: "number", text: "Hit \(player.number) to reach \(KillerConfig.killerPoints)")
+    }
 }
 
-private struct KillerCard: View {
-    let player: KillerPlayer
+/// Seats after `current`, in throwing order.
+private func upNext(after current: Int, count: Int) -> [Int] {
+    (1..<max(count, 1)).map { (current + $0) % count }
+}
+
+/// The current player's glass card: big score on the left, this visit on the right, darts thrown,
+/// a hint for what to do now and a few stats. A soft glow in their seat colour sits behind the glass.
+private struct TurnCard: View {
+    let name: String
     let accent: Accent
-    let isCurrent: Bool
+    let score: String
+    let scoreCaption: String
+    let visit: String
+    let visitCaption: String
+    let stats: [(label: String, value: String)]
+    let hint: TurnHint?
     let dartsInVisit: Int
+    /// Tints the whole card, e.g. red on a bust.
+    var alert: Color?
+    var isKiller = false
+
+    private let shape = RoundedRectangle(cornerRadius: 28, style: .continuous)
 
     var body: some View {
-        VStack(spacing: 4) {
-            ZStack(alignment: .topTrailing) {
-                SoftAvatar(name: player.name, size: 28, accent: accent)
-                if player.isKiller {
-                    KillerBadge(size: 13)
-                        .offset(x: 16, y: -8)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                SoftAvatar(name: name, size: 30, accent: accent)
+                Text(name)
+                    .font(.system(size: 17, weight: .semibold))
+                    .lineLimit(1)
+                if isKiller { KillerBadge(size: 13) }
+                Spacer()
+                DartPips(thrown: dartsInVisit)
+            }
+
+            HStack(alignment: .lastTextBaseline) {
+                BigValue(value: score, caption: scoreCaption, size: 56, alignment: .leading)
+                Spacer()
+                BigValue(value: visit, caption: visitCaption, size: 30, alignment: .trailing)
+            }
+
+            HStack(spacing: 12) {
+                if let hint {
+                    Label(hint.text, systemImage: hint.systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .foregroundStyle(hint.emphasis ? accent.ink : Soft.slateSoft)
+                        .padding(.horizontal, 12)
+                        .frame(height: 32)
+                        .background(hint.emphasis ? accent.tint : .white.opacity(0.7), in: Capsule())
+                        .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .leading)))
                 }
-            }
-            Text(player.name)
-                .font(.system(size: 12, weight: .semibold))
-                .strikethrough(player.isOut)
-                .lineLimit(1)
-            Text("\(player.number)")
-                .font(.system(size: 30, weight: .semibold))
-                .monospacedDigit()
-                .displayTracking()
-            if player.isOut {
-                Text("OUT")
-                    .font(.system(size: 11, weight: .black))
-                    .foregroundStyle(Soft.danger)
-            } else if player.isKiller {
-                Text("KILLER")
-                    .font(.system(size: 11, weight: .black))
-                    .foregroundStyle(Soft.danger)
-            } else {
-                KillerPips(points: player.points, filled: accent.solid)
-            }
-            if isCurrent {
-                HStack(spacing: 4) {
-                    ForEach(0..<3, id: \.self) { i in
-                        Circle()
-                            .fill(i < dartsInVisit ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
-                            .frame(width: 6, height: 6)
+                Spacer(minLength: 0)
+                ForEach(stats, id: \.label) { stat in
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(stat.value)
+                            .font(.system(size: 15, weight: .semibold))
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
+                        Text(stat.label)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
         }
-        .foregroundStyle(isCurrent ? .primary : .secondary)
-        .opacity(player.isOut ? 0.45 : 1)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity)
-        .glassEffect(glass, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: player.points)
+        .foregroundStyle(Soft.slate)
+        .padding(16)
+        .background {
+            // Behind the glass, so the glass picks it up as a soft coloured light.
+            Circle()
+                .fill(accent.solid.opacity(0.45))
+                .frame(width: 180, height: 180)
+                .blur(radius: 50)
+                .offset(x: -70, y: -60)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .clipShape(shape)
+                .allowsHitTesting(false)
+        }
+        .glassEffect(alert.map { .regular.tint($0.opacity(0.5)) } ?? .regular.tint(.white.opacity(0.4)), in: shape)
+        // White glass: keep the text dark even in dark mode over the camera.
+        .environment(\.colorScheme, .light)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: score)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: visit)
+        .animation(.easeOut(duration: 0.2), value: hint?.text)
     }
+}
 
-    private var glass: Glass {
-        if player.isKiller { return .regular.tint(Soft.danger.opacity(isCurrent ? 0.6 : 0.35)) }
-        if isCurrent { return .regular.tint(accent.solid.opacity(0.55)) }
-        return .regular
+private struct BigValue: View {
+    let value: String
+    let caption: String
+    let size: CGFloat
+    let alignment: HorizontalAlignment
+
+    var body: some View {
+        VStack(alignment: alignment, spacing: 0) {
+            Text(value)
+                .font(.system(size: size, weight: .semibold))
+                .monospacedDigit()
+                .displayTracking()
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(caption)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Three small bars, filled for darts thrown this visit.
+private struct DartPips: View {
+    let thrown: Int
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<3, id: \.self) { i in
+                Capsule()
+                    .fill(i < thrown ? AnyShapeStyle(Soft.slate) : AnyShapeStyle(Soft.slate.opacity(0.15)))
+                    .frame(width: 14, height: 5)
+            }
+        }
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: thrown)
+        .accessibilityLabel("\(thrown) of 3 darts thrown")
+    }
+}
+
+/// The waiting players, scrolling sideways when they don't fit.
+private struct WaitingRow<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) { content }
+        }
+        .scrollClipDisabled()
+    }
+}
+
+private struct WaitingChip: View {
+    let name: String
+    let accent: Accent
+    let value: String
+    var isOut = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            SoftAvatar(name: name, size: 22, accent: accent)
+            Text(name)
+                .font(.system(size: 13, weight: .semibold))
+                .strikethrough(isOut)
+                .lineLimit(1)
+            Text(value)
+                .font(.system(size: 13, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .contentTransition(.numericText())
+        }
+        .padding(.leading, 5)
+        .padding(.trailing, 12)
+        .frame(height: 32)
+        .glassEffect(.regular, in: Capsule())
+        .opacity(isOut ? 0.45 : 1)
     }
 }
 
 // MARK: - Visit
 
-/// The current visit: three glass darts (tap to correct), the visit score and checkout, undo and next.
+/// The current visit in one row: three glass darts (tap to correct), undo and next.
+/// The visit total and what to do next live on the turn card above.
 private struct VisitPanel: View {
     let match: MatchController
 
     let edit: (Int) -> Void
 
+    private let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+
     var body: some View {
-        GlassEffectContainer(spacing: 10) {
-            VStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    ForEach(0..<3, id: \.self) { i in
-                        DartCell(score: i < match.visit.count ? match.visit[i].score : nil) {
-                            // Empty slots can be filled in order, for darts the camera missed.
-                            if i <= match.visit.count { edit(i) }
-                        }
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(0..<3, id: \.self) { i in
+                    DartCell(score: i < match.visit.count ? match.visit[i].score : nil) {
+                        // Empty slots can be filled in order, for darts the camera missed.
+                        if i <= match.visit.count { edit(i) }
                     }
                 }
 
-                HStack(alignment: .center, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(match.statusLine)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                        Text(match.visitHeadline)
-                            .font(.system(size: 30, weight: .semibold))
-                            .monospacedDigit()
-                            .displayTracking()
-                            .contentTransition(.numericText())
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-                    .glassEffect(
-                        match.isBust ? .regular.tint(Soft.danger.opacity(0.6)) : .regular,
-                        in: RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    )
-
-                    Button(action: match.undo) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 18, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                    }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .disabled(!match.canUndo)
-
-                    Button(action: match.nextVisit) {
-                        Label("Next", systemImage: "chevron.right")
-                            .font(.system(size: 17, weight: .semibold))
-                            .padding(.horizontal, 8)
-                            .frame(height: 44)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .tint(Soft.charcoal)
-                    .disabled(match.isFinished)
+                Button(action: match.undo) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 50, height: 58)
+                        .contentShape(shape)
+                        .glassEffect(.regular.interactive(), in: shape)
                 }
+                .buttonStyle(.plain)
+                .disabled(!match.canUndo)
+                .opacity(match.canUndo ? 1 : 0.5)
+
+                Button(action: match.nextVisit) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 64, height: 58)
+                        .contentShape(shape)
+                        .glassEffect(.regular.tint(Soft.charcoal).interactive(), in: shape)
+                }
+                .buttonStyle(.plain)
+                .disabled(match.isFinished)
+                .accessibilityLabel("Next visit")
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: match.visit)
