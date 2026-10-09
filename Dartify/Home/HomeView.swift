@@ -286,7 +286,7 @@ private struct TrailingIconLabelStyle: LabelStyle {
     }
 }
 
-private extension View {
+extension View {
     /// Staggered entrance for the stacked cards (`.soft-rise`).
     func rise(_ index: Int, _ appeared: Bool) -> some View {
         opacity(appeared ? 1 : 0)

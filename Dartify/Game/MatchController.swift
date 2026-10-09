@@ -108,10 +108,11 @@ final class MatchController: Identifiable {
         replay()
     }
 
-    /// Saves a finished X01 match to the history (once); the season stats are X01 stats.
+    /// Saves a finished match (once): X01 to the season history, and the main user's result to their stats.
     func recordIfFinished() {
-        guard case .x01(let game) = state, game.isFinished, !isRecorded else { return }
-        LocalStore.shared.record(game)
+        guard state.isFinished, !isRecorded else { return }
+        if case .x01(let game) = state { LocalStore.shared.record(game) }
+        StatsStore.record(state, roster: roster)
         isRecorded = true
     }
 
