@@ -57,6 +57,7 @@ struct HomeView: View {
         .onChange(of: match == nil) { _, noMatch in
             if noMatch { Scoreboard.shared.match = nil }
         }
+        .toolbar(.hidden, for: .navigationBar)
     }
 
     private var header: some View {
@@ -71,12 +72,23 @@ struct HomeView: View {
                     .foregroundStyle(Soft.subtle)
             }
             Spacer()
-            if Scoreboard.shared.tvConnected {
-                Image(systemName: "tv")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Accent.mint.ink)
-                    .frame(width: 48, height: 48)
-                    .softFloat(Circle())
+            HStack(spacing: 8) {
+                if Scoreboard.shared.tvConnected {
+                    Image(systemName: "tv")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Accent.mint.ink)
+                        .frame(width: 48, height: 48)
+                        .softFloat(Circle())
+                }
+                NavigationLink {
+                    ProfileView()
+                } label: {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
             }
         }
         .padding(.horizontal, 8)

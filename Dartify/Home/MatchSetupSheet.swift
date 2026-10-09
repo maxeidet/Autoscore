@@ -40,6 +40,17 @@ struct MatchSetupSheet: View {
 
     private var remaining: Int { numPlayers - selected.count }
 
+    /// Saved players with you first.
+    private var orderedPlayers: [SavedPlayer] {
+        store.players.filter(store.isMain) + store.players.filter { !store.isMain($0) }
+    }
+
+    /// You have a player but aren't in this match, so it won't count in your stats.
+    private var missingYou: Bool {
+        guard let me = store.mainPlayer else { return false }
+        return !selected.contains(me)
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
@@ -60,6 +71,8 @@ struct MatchSetupSheet: View {
             startButton
         }
         .background(Soft.shell)
+        // You're in by default, throwing first.
+        .onAppear { if selected.isEmpty, let me = store.mainPlayer { selected = [me] } }
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(32)
     }
@@ -190,20 +203,31 @@ struct MatchSetupSheet: View {
                 .foregroundStyle(Soft.subtle)
 
             FlowLayout(spacing: 8) {
-                ForEach(store.players) { player in
+                ForEach(orderedPlayers) { player in
                     PlayerChip(
                         player: player,
                         order: selected.firstIndex(of: player),
+                        isYou: store.isMain(player),
                         disabled: selected.count >= numPlayers && !selected.contains(player),
                         toggle: { toggle(player) }
                     )
                     .contextMenu {
-                        Button("Remove player", systemImage: "trash", role: .destructive) {
-                            selected.removeAll { $0 == player }
-                            store.removePlayer(player)
+                        // Your own player holds your stats, so it can't be removed.
+                        if !store.isMain(player) {
+                            Button("Remove player", systemImage: "trash", role: .destructive) {
+                                selected.removeAll { $0 == player }
+                                store.removePlayer(player)
+                            }
                         }
                     }
                 }
+            }
+
+            if missingYou {
+                Label("You're not in this match, so it won't count in your stats.", systemImage: "info.circle")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Accent.coral.ink)
+                    .transition(.opacity)
             }
 
             HStack(spacing: 10) {
@@ -252,6 +276,7 @@ struct MatchSetupSheet: View {
 private struct PlayerChip: View {
     let player: SavedPlayer
     let order: Int?
+    var isYou = false
     let disabled: Bool
     let toggle: () -> Void
 
@@ -263,6 +288,11 @@ private struct PlayerChip: View {
                 Text(player.name)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(order != nil ? accent.ink : Soft.slate)
+                if isYou {
+                    Text("You")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(order != nil ? accent.ink.opacity(0.7) : Soft.subtle)
+                }
                 if let order {
                     Text("\(order + 1)")
                         .font(.system(size: 12, weight: .bold))
