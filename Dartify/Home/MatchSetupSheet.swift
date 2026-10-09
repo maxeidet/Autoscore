@@ -14,7 +14,7 @@ enum SetupMode: String, Identifiable {
 
 struct MatchSetupSheet: View {
     let mode: SetupMode
-    let start: (MatchSettings, [SavedPlayer]) -> Void
+    let start: (MatchSettings, [SavedPlayer], ScoringInput) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var store = LocalStore.shared
@@ -27,6 +27,8 @@ struct MatchSetupSheet: View {
     @State private var numPlayers = 2
     @State private var selected: [SavedPlayer] = []
     @State private var newName = ""
+    /// Remembers the last choice between matches.
+    @AppStorage("dartify.scoringInput") private var input: ScoringInput = .camera
 
     private var config: X01Config {
         X01Config(startingScore: startingScore, doubleOut: doubleOut, doubleIn: doubleIn, legs: bestOf ? legs : 1)
@@ -59,6 +61,7 @@ struct MatchSetupSheet: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         formatCard
+                        scoringCard
                         playersCard
                     }
                     .padding(.horizontal, 16)
@@ -80,7 +83,7 @@ struct MatchSetupSheet: View {
     /// Floats over the scrolling cards, pinned to the bottom; the cards fade out beneath it.
     private var startButton: some View {
         Button {
-            start(settings, selected)
+            start(settings, selected, input)
             dismiss()
         } label: {
             Label(remaining == 0 ? "Start match" : "Pick \(remaining) more \(remaining == 1 ? "player" : "players")",
@@ -192,6 +195,25 @@ struct MatchSetupSheet: View {
         .padding(20)
         .softCard()
         .animation(.spring(response: 0.38, dampingFraction: 0.85), value: bestOf)
+    }
+
+    private var scoringCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionLabel(systemImage: "hand.tap", title: "Scoring")
+            SoftSegmented(options: [(value: ScoringInput.camera, label: "Camera"), (value: ScoringInput.tap, label: "Tap board")],
+                          selection: $input)
+            Text(input == .camera
+                 ? "The camera watches the board and scores each dart."
+                 : "Tap where each dart landed on a board on screen. Drag to aim, lift to score.")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Soft.subtle)
+                .padding(.leading, 4)
+                .fixedSize(horizontal: false, vertical: true)
+                .contentTransition(.opacity)
+                .animation(.easeOut(duration: 0.2), value: input)
+        }
+        .padding(20)
+        .softCard()
     }
 
     private var playersCard: some View {

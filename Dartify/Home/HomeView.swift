@@ -36,8 +36,8 @@ struct HomeView: View {
         .background(Soft.canvas.ignoresSafeArea())
         .onAppear { appeared = true }
         .sheet(item: $setupMode) { mode in
-            MatchSetupSheet(mode: mode) { settings, players in
-                match = MatchController(settings: settings, players: players)
+            MatchSetupSheet(mode: mode) { settings, players, input in
+                match = MatchController(settings: settings, players: players, input: input)
                 showingGame = true
             }
         }
@@ -46,7 +46,7 @@ struct HomeView: View {
                 GameView(
                     match: match,
                     onLeave: { showingGame = false },
-                    onRematch: { self.match = MatchController(settings: match.settings, players: match.roster) },
+                    onRematch: { self.match = MatchController(settings: match.settings, players: match.roster, input: match.input) },
                     onFinish: {
                         showingGame = false
                         self.match = nil

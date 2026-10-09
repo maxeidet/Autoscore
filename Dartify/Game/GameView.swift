@@ -6,8 +6,8 @@
 import SwiftUI
 import UIKit
 
-/// The match screen on the phone: camera with the board overlay, every player's score, the current visit
-/// (tap a dart to correct it), and the winner card at the end.
+/// The match screen on the phone: the camera with the board overlay (or a board to tap, for tap scoring),
+/// every player's score, the current visit (tap a dart to correct it), and the winner card at the end.
 struct GameView: View {
     let match: MatchController
     /// Back to the home screen, keeping the match so it can be resumed.
@@ -22,12 +22,17 @@ struct GameView: View {
     @State private var camera = CameraController()
     @State private var showDebug = false
     @State private var editing: DartSlot?
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var usesCamera: Bool { match.input == .camera }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            if let backdrop {
+            if !usesCamera {
+                Soft.canvas.ignoresSafeArea()
+            } else if let backdrop {
                 Color.clear
                     .overlay(backdrop.resizable().scaledToFill())
                     .clipped()
@@ -37,8 +42,10 @@ struct GameView: View {
                     .ignoresSafeArea()
             }
 
-            LiveBoardOverlay(camera: camera, darts: match.visit)
-                .ignoresSafeArea()
+            if usesCamera {
+                LiveBoardOverlay(camera: camera, darts: match.visit)
+                    .ignoresSafeArea()
+            }
 
             VStack(spacing: 10) {
                 topBar
@@ -46,9 +53,16 @@ struct GameView: View {
                 case .x01(let game): PlayerStrip(game: game)
                 case .killer(let game): KillerStrip(game: game)
                 }
-                Spacer()
-                if showDebug {
-                    LiveDebugPanel(camera: camera)
+                if usesCamera {
+                    Spacer()
+                    if showDebug {
+                        LiveDebugPanel(camera: camera)
+                    }
+                } else {
+                    TapBoardView(darts: match.visit, disabled: match.state.isVisitOver || match.isFinished) {
+                        match.dartDetected($0)
+                    }
+                    .padding(.vertical, 4)
                 }
                 VisitPanel(match: match, edit: { editing = DartSlot(index: $0) })
             }
@@ -66,17 +80,19 @@ struct GameView: View {
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: match.isFinished)
-        .sheet(item: $editing, onDismiss: camera.endEditing) { slot in
+        // The tap board sits on the light canvas, so keep the glass and text in light mode there.
+        .environment(\.colorScheme, usesCamera ? colorScheme : .light)
+        .sheet(item: $editing, onDismiss: { if usesCamera { camera.endEditing() } }) { slot in
             DartEditor(
                 slot: slot.index,
                 current: slot.index < match.visit.count ? match.visit[slot.index].score : nil,
                 pick: { match.correctDart(at: slot.index, to: $0) }
             )
             .presentationDetents([.medium, .large])
-            .onAppear(perform: camera.beginEditing)
+            .onAppear { if usesCamera { camera.beginEditing() } }
         }
-        .task { if backdrop == nil { await camera.start() } }
-        .task(id: match.id) { match.attach(camera) }
+        .task { if usesCamera && backdrop == nil { await camera.start() } }
+        .task(id: match.id) { match.attach(usesCamera ? camera : nil) }
         .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
@@ -91,14 +107,16 @@ struct GameView: View {
         GlassEffectContainer(spacing: 10) {
             HStack(spacing: 10) {
                 Menu {
-                    if !camera.isLocked {
-                        // No `.disabled` on the board here: that reads `detection`, which changes every frame
-                        // and rebuilds the open menu so taps get lost. `lockNow` ignores it when there's no board.
-                        Button("Lock board now", systemImage: "lock", action: camera.lockNow)
+                    if usesCamera {
+                        if !camera.isLocked {
+                            // No `.disabled` on the board here: that reads `detection`, which changes every frame
+                            // and rebuilds the open menu so taps get lost. `lockNow` ignores it when there's no board.
+                            Button("Lock board now", systemImage: "lock", action: camera.lockNow)
+                        }
+                        Button("Recalibrate", systemImage: "scope", action: camera.recalibrate)
+                        Toggle("Debug view", systemImage: "ladybug", isOn: $showDebug)
+                        Divider()
                     }
-                    Button("Recalibrate", systemImage: "scope", action: camera.recalibrate)
-                    Toggle("Debug view", systemImage: "ladybug", isOn: $showDebug)
-                    Divider()
                     Button("Leave match", systemImage: "house", role: .destructive, action: onLeave)
                 } label: {
                     Image(systemName: "ellipsis")
@@ -119,7 +137,7 @@ struct GameView: View {
 
                 Spacer()
 
-                CameraStatusBadge(camera: camera)
+                CameraStatusBadge(camera: usesCamera ? camera : nil)
             }
         }
     }
@@ -148,13 +166,16 @@ private struct LiveDebugPanel: View {
 }
 
 /// Camera status pill, or the TV icon when the camera is fine. Also mirrors the status to the TV scoreboard.
+/// No camera (tap scoring) shows just the TV icon.
 private struct CameraStatusBadge: View {
-    let camera: CameraController
+    let camera: CameraController?
+
+    private var status: String { camera?.status ?? "" }
 
     var body: some View {
         Group {
-            if !camera.status.isEmpty {
-                Label(camera.status, systemImage: "camera.viewfinder")
+            if !status.isEmpty {
+                Label(status, systemImage: "camera.viewfinder")
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -168,7 +189,7 @@ private struct CameraStatusBadge: View {
                     .glassEffect(.regular.tint(Accent.mint.solid.opacity(0.55)), in: Circle())
             }
         }
-        .onChange(of: camera.status, initial: true) { _, status in
+        .onChange(of: status, initial: true) { _, status in
             Scoreboard.shared.cameraStatus = status
         }
     }

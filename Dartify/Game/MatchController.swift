@@ -6,6 +6,11 @@
 import Foundation
 import Observation
 
+/// How darts get into a match: the camera watching the real board, or tapping a board on screen.
+nonisolated enum ScoringInput: String, Sendable, CaseIterable {
+    case camera, tap
+}
+
 /// Runs a local match (X01 or Killer): turns camera darts into game moves, handles corrections and undo,
 /// announces scores and keeps the TV scoreboard in sync.
 ///
@@ -16,6 +21,7 @@ final class MatchController: Identifiable {
     let id = UUID()
     let settings: MatchSettings
     let roster: [SavedPlayer]
+    let input: ScoringInput
 
     /// The game including the darts of the current visit.
     private(set) var state: GameState
@@ -30,9 +36,10 @@ final class MatchController: Identifiable {
     @ObservationIgnored private let announcer = Announcer.shared
     @ObservationIgnored private let scoreboard = Scoreboard.shared
 
-    init(settings: MatchSettings, players: [SavedPlayer]) {
+    init(settings: MatchSettings, players: [SavedPlayer], input: ScoringInput = .camera) {
         self.settings = settings
         roster = players
+        self.input = input
         let state = GameState(settings: settings, players: players)
         self.state = state
         visitStart = state
@@ -42,12 +49,13 @@ final class MatchController: Identifiable {
     var canUndo: Bool { !visit.isEmpty || !undoStack.isEmpty }
     var isFinished: Bool { state.isFinished }
 
-    /// Connects the camera: its darts drive the match, and it learns when a visit is over.
-    func attach(_ camera: CameraController) {
+    /// Starts the match on screen. With a camera, its darts drive the match and it learns when a visit is over;
+    /// without one (tap scoring) darts come in through `dartDetected` and visits end with `nextVisit`.
+    func attach(_ camera: CameraController?) {
         self.camera = camera
-        camera.onDart = { [weak self] dart in self?.dartDetected(dart) }
-        camera.onDartsPulled = { [weak self] in self?.dartsPulled() }
-        camera.setVisit(visit, complete: state.isVisitOver)
+        camera?.onDart = { [weak self] dart in self?.dartDetected(dart) }
+        camera?.onDartsPulled = { [weak self] in self?.dartsPulled() }
+        camera?.setVisit(visit, complete: state.isVisitOver)
         if case .killer = state, undoStack.isEmpty, visit.isEmpty { announceNumbers() }
         announceUp()
     }
