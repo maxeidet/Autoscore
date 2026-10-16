@@ -148,17 +148,6 @@ final class LocalStore {
         save(matches, key: matchesKey)
     }
 
-    // MARK: - Season stats
-
-    var threeDartAverage: Double? {
-        let points = matches.flatMap(\.players).reduce(0) { $0 + $1.points }
-        let darts = matches.flatMap(\.players).reduce(0) { $0 + $1.darts }
-        return darts > 0 ? Double(points) / Double(darts) * 3 : nil
-    }
-
-    var highestCheckout: Int? { matches.compactMap(\.highestCheckout).max() }
-    var bestLegDarts: Int? { matches.compactMap(\.bestLegDarts).min() }
-
     private func save<T: Encodable>(_ value: T, key: String) {
         if let data = try? JSONEncoder().encode(value) {
             UserDefaults.standard.set(data, forKey: key)

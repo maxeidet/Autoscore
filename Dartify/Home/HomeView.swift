@@ -5,10 +5,13 @@
 //  Home screen in the React app's soft style: header, resume card, season stats and game modes.
 //
 
+import SwiftData
 import SwiftUI
 
 struct HomeView: View {
     @State private var store = LocalStore.shared
+    /// The main user's matches, the same data the stats page shows.
+    @Query(sort: \MatchStat.date, order: .reverse) private var statMatches: [MatchStat]
     @State private var match: MatchController?
     @State private var showingGame = false
     @State private var setupMode: SetupMode?
@@ -22,7 +25,13 @@ struct HomeView: View {
                     ResumeCard(match: match, resume: { showingGame = true }, discard: { self.match = nil })
                         .rise(1, appeared)
                 }
-                statsSection.rise(2, appeared)
+                NavigationLink {
+                    StatsView()
+                } label: {
+                    statsSection
+                }
+                .buttonStyle(SoftPressStyle())
+                .rise(2, appeared)
                 playSection.rise(3, appeared)
                 Text("Dartify · camera scoring")
                     .font(.system(size: 12, weight: .medium))
@@ -105,8 +114,9 @@ struct HomeView: View {
     // MARK: - Stats
 
     private var statsSection: some View {
-        let average = store.threeDartAverage
-        let played = store.matches.count
+        let summary = StatSummary(matches: statMatches)
+        let average = summary.average
+        let played = summary.played
         let headline = if let average {
             "Averaging \(String(format: "%.1f", average)) a visit."
         } else if played > 0 {
@@ -137,9 +147,9 @@ struct HomeView: View {
             HStack(spacing: 0) {
                 StatTile(systemImage: "target", accent: .mint, value: average.map { String(format: "%.1f", $0) }, label: "3-dart avg")
                 Divider().padding(.vertical, 16)
-                StatTile(systemImage: "trophy.fill", accent: .azure, value: store.highestCheckout.map(String.init), label: "High out")
+                StatTile(systemImage: "trophy.fill", accent: .azure, value: summary.highestCheckout.map(String.init), label: "High out")
                 Divider().padding(.vertical, 16)
-                StatTile(systemImage: "flame.fill", accent: .coral, value: store.bestLegDarts.map(String.init), label: "Best leg")
+                StatTile(systemImage: "flame.fill", accent: .coral, value: summary.bestLegDarts.map(String.init), label: "Best leg")
             }
             .padding(8)
             .softCard()
@@ -309,4 +319,5 @@ extension View {
 
 #Preview {
     HomeView()
+        .modelContainer(for: MatchStat.self, inMemory: true)
 }
