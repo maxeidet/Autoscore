@@ -120,7 +120,8 @@ final class MatchController: Identifiable {
     func recordIfFinished() {
         guard state.isFinished, !isRecorded else { return }
         if case .x01(let game) = state { LocalStore.shared.record(game) }
-        StatsStore.record(state, roster: roster)
+        let visits = (undoStack + [(visitStart, visit)]).map { (player: $0.start.currentPlayerIndex, darts: $0.visit) }
+        StatsStore.record(state, roster: roster, visits: visits)
         isRecorded = true
     }
 

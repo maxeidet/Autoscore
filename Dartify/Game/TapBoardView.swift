@@ -115,7 +115,7 @@ struct TapBoardView: View {
     }
 
     /// Where to draw a dart's marker: its exact spot, or the middle of its bed for darts entered by hand.
-    private static func viewPoint(for dart: DetectedDart, size: CGFloat) -> CGPoint? {
+    static func viewPoint(for dart: DetectedDart, size: CGFloat) -> CGPoint? {
         let half = Double(size) / 2
         if dart.hasPosition {
             return CGPoint(x: half + dart.x / mmPerHalfWidth * half, y: half - dart.y / mmPerHalfWidth * half)
@@ -138,7 +138,7 @@ struct TapBoardView: View {
 
 // MARK: - Pieces
 
-private struct BoardPhoto: View {
+struct BoardPhoto: View {
     var body: some View {
         Image("TapBoard")
             .resizable()

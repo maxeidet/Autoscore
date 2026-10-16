@@ -47,8 +47,9 @@ struct StatsView: View {
                 } else {
                     overviewSection.rise(0, appeared)
                     if filter != .killer { formSection.rise(1, appeared) }
-                    recordsSection.rise(2, appeared)
-                    historySection.rise(3, appeared)
+                    heatMapSection.rise(2, appeared)
+                    recordsSection.rise(3, appeared)
+                    historySection.rise(4, appeared)
                 }
             }
             .padding(.horizontal, 16)
@@ -204,6 +205,48 @@ struct StatsView: View {
         .accessibilityLabel("Three-dart average over the last \(form.count) X01 matches")
     }
 
+    // MARK: - Heat map
+
+    private var heatMapSection: some View {
+        let darts = summary.dartLog
+        let top = darts.topBeds(3)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            ShellTitle(systemImage: "circle.hexagongrid.fill", title: "Heat map") {
+                if !darts.isEmpty {
+                    Text("\(darts.count) darts")
+                        .font(.system(size: 14, weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(Soft.subtle)
+                }
+            }
+            .padding(16)
+
+            VStack(spacing: 16) {
+                if darts.isEmpty {
+                    Text("Finish a match to see where your darts land.")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(Soft.subtle)
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                } else {
+                    HeatMapView(darts: darts)
+                        .frame(maxWidth: 320)
+                    if !top.isEmpty {
+                        Text("Most hit: \(top.joined(separator: " · "))")
+                            .font(.system(size: 15, weight: .medium))
+                            .monospacedDigit()
+                            .foregroundStyle(Soft.slateSoft)
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .softCard()
+        }
+        .padding(8)
+        .softShell()
+    }
+
     // MARK: - Records
 
     private var recordsSection: some View {
@@ -224,6 +267,10 @@ struct StatsView: View {
                                text: summary.bestMatchAverage.map { String(format: "%.1f", $0) }, label: "Best match avg")
                     RecordTile(systemImage: "star.fill", accent: .coral, value: summary.oneEighties, label: "180s")
                     RecordTile(systemImage: "flame.fill", accent: .azure, value: summary.ton40Plus, label: "140+")
+                    RecordTile(systemImage: "scope", accent: .mint,
+                               text: summary.doubleRate.map { $0.formatted(.percent.precision(.fractionLength(0))) },
+                               label: summary.doubleAttempts > 0 ? "Doubles · \(summary.doublesHit)/\(summary.doubleAttempts)" : "Doubles")
+                    RecordTile(systemImage: "arrow.up", accent: .orchid, value: summary.tonPlus, label: "100+")
                 }
             }
         }
@@ -244,15 +291,20 @@ struct StatsView: View {
                                message: "Finished games you play as \(myName) show up here.")
             } else {
                 ForEach(matches.prefix(25)) { match in
-                    HistoryCard(match: match)
-                        .contextMenu {
-                            Button("Delete from stats", systemImage: "trash", role: .destructive) {
-                                withAnimation(.snappy) {
-                                    context.delete(match)
-                                    try? context.save()
-                                }
+                    NavigationLink {
+                        MatchDetailView(match: match)
+                    } label: {
+                        HistoryCard(match: match)
+                    }
+                    .buttonStyle(SoftPressStyle())
+                    .contextMenu {
+                        Button("Delete from stats", systemImage: "trash", role: .destructive) {
+                            withAnimation(.snappy) {
+                                context.delete(match)
+                                try? context.save()
                             }
                         }
+                    }
                 }
             }
         }
@@ -269,7 +321,7 @@ private struct FormPoint: Identifiable {
 
 // MARK: - Pieces
 
-private struct LabeledValue: View {
+struct LabeledValue: View {
     let label: String
     let value: String?
 
@@ -292,7 +344,7 @@ private struct LabeledValue: View {
 }
 
 /// White card with a tinted icon, a big value and a label.
-private struct RecordTile: View {
+struct RecordTile: View {
     let systemImage: String
     let accent: Accent
     let text: String?
