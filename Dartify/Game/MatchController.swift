@@ -22,6 +22,8 @@ final class MatchController: Identifiable {
     let settings: MatchSettings
     let roster: [SavedPlayer]
     let input: ScoringInput
+    /// Computer players (X01 only): their seat's roster id and the 3-dart average they play at.
+    let bots: [UUID: Double]
 
     /// The game including the darts of the current visit.
     private(set) var state: GameState
@@ -35,19 +37,43 @@ final class MatchController: Identifiable {
     @ObservationIgnored private weak var camera: CameraController?
     @ObservationIgnored private let announcer = Announcer.shared
     @ObservationIgnored private let scoreboard = Scoreboard.shared
+    /// Each bot's throwing skill, worked out in the background when the match is made.
+    @ObservationIgnored private var botSkills: [UUID: Task<X01Bot, Never>] = [:]
+    /// The bot's next move (a dart, or ending its visit), waiting for its pause.
+    @ObservationIgnored private var botMove: Task<Void, Never>?
+    /// The match is on screen; bots only play then.
+    @ObservationIgnored private var isActive = false
 
-    init(settings: MatchSettings, players: [SavedPlayer], input: ScoringInput = .camera) {
+    init(settings: MatchSettings, players: [SavedPlayer], input: ScoringInput = .camera, bots: [UUID: Double] = [:]) {
         self.settings = settings
         roster = players
         self.input = input
+        if case .x01(let config) = settings {
+            self.bots = bots.filter { id, _ in players.contains { $0.id == id } }
+            for (id, average) in self.bots {
+                botSkills[id] = Task.detached(priority: .userInitiated) { X01Bot.calibrated(average: average, config: config) }
+            }
+        } else {
+            self.bots = [:]
+        }
         let state = GameState(settings: settings, players: players)
         self.state = state
         visitStart = state
         syncScoreboard()
     }
 
+    /// The same match again, bots included.
+    func rematch() -> MatchController {
+        MatchController(settings: settings, players: roster, input: input, bots: bots)
+    }
+
     var canUndo: Bool { !visit.isEmpty || !undoStack.isEmpty }
     var isFinished: Bool { state.isFinished }
+
+    func isBot(seat: Int) -> Bool { roster.indices.contains(seat) && bots[roster[seat].id] != nil }
+
+    /// A bot is throwing, so the board and the Next button belong to it.
+    var isBotTurn: Bool { !state.isFinished && isBot(seat: state.currentPlayerIndex) }
 
     /// Starts the match on screen. With a camera, its darts drive the match and it learns when a visit is over;
     /// without one (tap scoring) darts come in through `dartDetected` and visits end with `nextVisit`.
@@ -58,11 +84,19 @@ final class MatchController: Identifiable {
         camera?.setVisit(visit, complete: state.isVisitOver)
         if case .killer = state, undoStack.isEmpty, visit.isEmpty { announceNumbers() }
         announceUp()
+        isActive = true
+        scheduleBot()
     }
 
     // MARK: - Input
 
     func dartDetected(_ dart: DetectedDart) {
+        // The bot's darts don't come from the board, so anything seen there now is someone walking up.
+        guard !isBotTurn else { return }
+        addDart(dart)
+    }
+
+    private func addDart(_ dart: DetectedDart) {
         // After a bust, checkout or three darts the visit is over; further darts don't count.
         guard !state.isVisitOver else { return }
         visit.append(dart)
@@ -73,7 +107,7 @@ final class MatchController: Identifiable {
 
     /// Darts pulled out of the board: the visit is done.
     func dartsPulled() {
-        guard !visit.isEmpty else { return }
+        guard !visit.isEmpty, !isBotTurn else { return }
         commitVisit()
     }
 
@@ -106,12 +140,17 @@ final class MatchController: Identifiable {
     }
 
     /// Removes the last dart; with no darts this visit, reopens the previous visit for correcting.
+    /// Bot visits are skipped: undo goes back to the last person's dart and the bot throws again after it.
     func undo() {
+        if isBot(seat: state.currentPlayerIndex) { visit = [] }
         if !visit.isEmpty {
             visit.removeLast()
-        } else if let previous = undoStack.popLast() {
+        } else if var previous = undoStack.popLast() {
+            while isBot(seat: previous.start.currentPlayerIndex), let earlier = undoStack.popLast() {
+                previous = earlier
+            }
             visitStart = previous.start
-            visit = previous.visit
+            visit = isBot(seat: previous.start.currentPlayerIndex) ? [] : previous.visit
         }
         replay()
     }
@@ -119,6 +158,7 @@ final class MatchController: Identifiable {
     /// Saves a finished match (once): X01 to the season history, and the main user's result to their stats.
     func recordIfFinished() {
         guard state.isFinished, !isRecorded else { return }
+        DartDataset.shared.labelVisit(visit)
         if case .x01(let game) = state { LocalStore.shared.record(game) }
         let visits = (undoStack + [(visitStart, visit)]).map { (player: $0.start.currentPlayerIndex, darts: $0.visit) }
         StatsStore.record(state, roster: roster, visits: visits)
@@ -126,6 +166,9 @@ final class MatchController: Identifiable {
     }
 
     func detach() {
+        isActive = false
+        botMove?.cancel()
+        botMove = nil
         camera?.onDart = nil
         camera?.onDartsPulled = nil
         camera = nil
@@ -144,13 +187,16 @@ final class MatchController: Identifiable {
         }
         visit = counted
         state = s
-        camera?.setVisit(visit, complete: state.isVisitOver)
+        // The bot's darts aren't on the real board, so the camera shouldn't look for them.
+        camera?.setVisit(isBotTurn ? [] : visit, complete: isBotTurn ? false : state.isVisitOver)
         syncScoreboard()
+        scheduleBot()
         return outcome
     }
 
     private func commitVisit() {
         guard !state.isFinished else { return }
+        DartDataset.shared.labelVisit(visit)
         undoStack.append((visitStart, visit))
         var s = state
         s.endVisit()
@@ -160,6 +206,40 @@ final class MatchController: Identifiable {
         camera?.setVisit([], complete: false)
         syncScoreboard()
         announceUp()
+        scheduleBot()
+    }
+
+    // MARK: - Bot
+
+    /// Plans the bot's next move when it's a bot's turn: a dart after a short pause, or, once its visit is over,
+    /// moving on to the next player. Every change to the match plans again, so undo and corrections just work.
+    private func scheduleBot() {
+        botMove?.cancel()
+        botMove = nil
+        guard isActive, isBotTurn, case .x01 = state,
+              let skill = botSkills[roster[state.currentPlayerIndex].id] else { return }
+        let pause: Duration = if !state.isVisitOver {
+            visit.isEmpty ? .seconds(1.6) : .seconds(1.1)
+        } else if state.winnerIndex != nil || isLegWon {
+            .seconds(3)
+        } else {
+            .seconds(2)
+        }
+        botMove = Task { [weak self] in
+            let bot = await skill.value
+            try? await Task.sleep(for: pause)
+            guard let self, !Task.isCancelled, self.isBotTurn, case .x01(let game) = self.state else { return }
+            if game.isVisitOver {
+                self.nextVisit()
+            } else {
+                self.addDart(bot.throwDart(in: game))
+            }
+        }
+    }
+
+    private var isLegWon: Bool {
+        if case .x01(let g) = state { return g.legWinnerIndex != nil }
+        return false
     }
 
     // MARK: - Text for the screens
@@ -282,7 +362,11 @@ final class MatchController: Identifiable {
         switch state {
         case .x01(let g):
             let player = g.currentPlayer
-            announcer.say(g.checkoutHint != nil ? "\(player.name), you require \(player.scoreLeft)" : player.name)
+            if g.checkoutHint == nil {
+                announcer.say(player.name)
+            } else {
+                announcer.say(isBotTurn ? "\(player.name) requires \(player.scoreLeft)" : "\(player.name), you require \(player.scoreLeft)")
+            }
         case .killer(let g):
             let player = g.currentPlayer
             announcer.say(player.isKiller ? "\(player.name), killer" : "\(player.name), number \(player.number)")

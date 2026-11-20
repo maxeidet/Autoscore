@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Show Documents (the training data in Documents/dataset) in the Files app. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<!-- Merged with the Info.plist Xcode generates. Declares a scene for external displays (AirPlay to an
 	     Apple TV, or a cable) so iOS shows the scoreboard there instead of mirroring the phone. -->
 	<key>UIApplicationSceneManifest</key>

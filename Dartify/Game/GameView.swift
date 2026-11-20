@@ -50,7 +50,7 @@ struct GameView: View {
             VStack(spacing: 10) {
                 topBar
                 switch match.state {
-                case .x01(let game): PlayerStrip(game: game, input: match.input)
+                case .x01(let game): PlayerStrip(game: game, input: match.input, isBotTurn: match.isBotTurn)
                 case .killer(let game): KillerStrip(game: game, input: match.input)
                 }
                 if usesCamera {
@@ -59,7 +59,7 @@ struct GameView: View {
                         LiveDebugPanel(camera: camera)
                     }
                 } else {
-                    TapBoardView(darts: match.visit, disabled: match.state.isVisitOver || match.isFinished) {
+                    TapBoardView(darts: match.visit, disabled: match.state.isVisitOver || match.isFinished || match.isBotTurn) {
                         match.dartDetected($0)
                     }
                     .padding(.vertical, 4)
@@ -215,6 +215,8 @@ private struct TurnHint {
 private struct PlayerStrip: View {
     let game: X01Game
     let input: ScoringInput
+    /// The current player is the bot, which throws and moves on by itself.
+    var isBotTurn = false
 
     var body: some View {
         let i = game.currentPlayerIndex
@@ -250,11 +252,20 @@ private struct PlayerStrip: View {
 
     /// Nothing while the player is simply throwing; the bars on the card already show the darts.
     private var hint: TurnHint? {
+        if isBotTurn { return botHint }
         if let leg = game.legWinnerIndex { return .visitDone("Leg to \(game.players[leg].name)", input: input) }
         if game.isBust { return .visitDone("Bust", input: input) }
         if game.isVisitOver { return .visitDone("Visit done", input: input) }
         if let route = game.checkoutHint { return TurnHint(systemImage: "target", text: route, emphasis: true) }
         return nil
+    }
+
+    private var botHint: TurnHint {
+        if game.legWinnerIndex != nil { return TurnHint(systemImage: "cpu", text: "Leg to the bot", emphasis: true) }
+        if game.isBust { return TurnHint(systemImage: "cpu", text: "Bust") }
+        if game.isVisitOver { return TurnHint(systemImage: "cpu", text: "Visit done") }
+        if let route = game.checkoutHint { return TurnHint(systemImage: "cpu", text: "Going for \(route)", emphasis: true) }
+        return TurnHint(systemImage: "cpu", text: "Throwing…")
     }
 }
 
@@ -517,7 +528,8 @@ private struct VisitPanel: View {
                         .glassEffect(.regular.tint(Soft.charcoal).interactive(), in: shape)
                 }
                 .buttonStyle(.plain)
-                .disabled(match.isFinished)
+                .disabled(match.isFinished || match.isBotTurn)
+                .opacity(match.isBotTurn ? 0.5 : 1)
                 .accessibilityLabel("Next visit")
             }
         }

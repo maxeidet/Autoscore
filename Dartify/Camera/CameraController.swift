@@ -4,6 +4,8 @@
 //
 
 import AVFoundation
+import ImageIO
+import UniformTypeIdentifiers
 import Observation
 
 /// Main-actor facing camera state for SwiftUI: calibration, locking, and dart events for the match.
@@ -149,6 +151,9 @@ nonisolated final class CaptureEngine: NSObject, AVCaptureVideoDataOutputSampleB
         case locked
         /// Board locked, but the camera may have moved: re-detecting the board before continuing.
         case checkingCamera
+        /// Board locked and probably still in place: quietly re-detecting it to refresh the calibration,
+        /// giving up after a moment if it can't be seen (e.g. someone in front of the board).
+        case refreshingCalibration
         /// Frames ignored (e.g. while the player edits a score).
         case paused
     }
@@ -160,14 +165,28 @@ nonisolated final class CaptureEngine: NSObject, AVCaptureVideoDataOutputSampleB
     private var lockedHomography: Homography?
     private var lockedImageSize = CGSize.zero
     private var checker: BoardDetector?
+    /// Training data: the last saved frame of the board as it is now, i.e. the next dart's "before" frame.
+    private let dataset = DartDataset.shared
+    private var baseFrame: String?
 
     private let sessionQueue = DispatchQueue(label: "dartify.camera.session")
     private let videoQueue = DispatchQueue(label: "dartify.camera.video", qos: .userInitiated)
     private var device: AVCaptureDevice?
-    /// Focal length in pixels of the portrait 720×1280 frames, from the camera's field of view.
+    /// Focal length in pixels of the portrait frames, from the camera's field of view.
     private var focalLength = 1000.0
-    /// Board movement (pixels) the camera check tolerates before re-locking to a new calibration.
-    private let movedTolerance = 1.5
+    /// Board movement (pixels) the camera check tolerates before re-locking; the dart detector lines up small shifts itself.
+    private let movedTolerance = 3.0
+    /// Routine refreshes re-lock when the board moved more than this (pixels), so creeping is corrected early.
+    private let refreshTolerance = 1.0
+    /// A routine refresh that finds the board this far away (pixels) is distrusted and ignored.
+    private let refreshMaxShift = 60.0
+    /// Drift (mm) since the lock after which an empty board is recalibrated, at most every `refreshInterval` s.
+    private let refreshDrift = 1.5
+    private let refreshInterval = 5.0
+    /// Frames a routine refresh may take (~2 s) before it gives up and keeps the old calibration.
+    private let refreshFrameLimit = 30
+    private var refreshFrames = 0
+    private var lastRefresh: TimeInterval = 0
     private let minFrameInterval = 1.0 / 15
     private var lastProcessed: TimeInterval = 0
     private var lastLogged: TimeInterval = 0
@@ -192,6 +211,7 @@ nonisolated final class CaptureEngine: NSObject, AVCaptureVideoDataOutputSampleB
             self.lockedImageSize = imageSize
             self.dartDetector = DartDetector(boardToImage: boardToImage, focalLength: self.focalLength, imageSize: imageSize,
                                              darts: darts, turnComplete: complete)
+            self.baseFrame = nil
             self.mode = .locked
         }
         sessionQueue.async { self.setCaptureLocked(true) }
@@ -207,7 +227,10 @@ nonisolated final class CaptureEngine: NSObject, AVCaptureVideoDataOutputSampleB
     }
 
     func nextTurn() {
-        videoQueue.async { self.dartDetector?.nextTurn() }
+        videoQueue.async {
+            self.dartDetector?.nextTurn()
+            self.baseFrame = nil
+        }
     }
 
     func setVisit(_ darts: [DetectedDart], complete: Bool) {
@@ -234,13 +257,28 @@ nonisolated final class CaptureEngine: NSObject, AVCaptureVideoDataOutputSampleB
         mode = .checkingCamera
     }
 
+    private func startRefresh(now: TimeInterval) {
+        checker = BoardDetector()
+        refreshFrames = 0
+        lastRefresh = now
+        mode = .refreshingCalibration
+    }
+
     private func configureIfNeeded() {
         guard !configured else { return }
         configured = true
 
         session.beginConfiguration()
         defer { session.commitConfiguration() }
-        session.sessionPreset = .hd1280x720
+        // 1080p gives about 1 px per mm on a board 1.5 m away, so thin steel points still show.
+        let longSide: Double
+        if session.canSetSessionPreset(.hd1920x1080) {
+            session.sessionPreset = .hd1920x1080
+            longSide = 1920
+        } else {
+            session.sessionPreset = .hd1280x720
+            longSide = 1280
+        }
 
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
               let input = try? AVCaptureDeviceInput(device: device),
@@ -249,9 +287,9 @@ nonisolated final class CaptureEngine: NSObject, AVCaptureVideoDataOutputSampleB
         session.addInput(input)
         self.device = device
 
-        // The field of view spans the sensor's long side, which is the 1280 px height of the portrait frames.
+        // The field of view spans the sensor's long side, which is the height of the portrait frames.
         let fov = Double(device.activeFormat.videoFieldOfView) * .pi / 180
-        if fov > 0 { focalLength = 640 / tan(fov / 2) }
+        if fov > 0 { focalLength = longSide / 2 / tan(fov / 2) }
 
         let output = AVCaptureVideoDataOutput()
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
@@ -300,19 +338,77 @@ nonisolated final class CaptureEngine: NSObject, AVCaptureVideoDataOutputSampleB
 
         case .locked:
             guard let dartDetector else { return }
-            let state = dartDetector.process(pixelBuffer)
+            var state = dartDetector.process(pixelBuffer)
+            collectTrainingData(&state, pixelBuffer, dartDetector)
             lines = [state.status] + state.debug.lines
-            if state.event == .cameraMoved { startCameraCheck() }
+            if state.event == .cameraMoved {
+                startCameraCheck()
+            } else if state.event == .cleared {
+                // Darts just pulled: the player is walking back, a good moment to refresh the calibration.
+                startRefresh(now: now)
+            } else if state.event == nil, dartDetector.darts.isEmpty, !dartDetector.turnComplete,
+                      dartDetector.driftSinceLock > refreshDrift, now - lastRefresh >= refreshInterval {
+                startRefresh(now: now)
+            }
+            let rejected = state.debug.lines.contains { $0.hasPrefix("✗ change") || $0.hasPrefix("✗ no tip") }
+            if state.event != nil || rejected {
+                // Always log what led to an event, and keep the debug image of each dart (or rejected change) for tuning.
+                let entry = "[Dartify] EVENT \(state.event.map { "\($0)" } ?? "rejected")\n  " + lines.joined(separator: "\n  ")
+                print(entry)
+                appendDebugLog(entry)
+                if rejected { saveDebugImage(state.debug.mask, name: "rejected") }
+                if case .dart = state.event { saveDebugImage(state.debug.mask, name: "dart") }
+            }
             onDarts?(state)
 
         case .checkingCamera:
             lines = checkCamera(pixelBuffer)
+
+        case .refreshingCalibration:
+            lines = refreshCalibration(pixelBuffer)
         }
 
         if now - lastLogged >= 1 {
             lastLogged = now
             print("[Dartify]\n  " + lines.joined(separator: "\n  "))
+            appendDebugLog("[\(mode)]\n  " + lines.joined(separator: "\n  "))
         }
+    }
+
+    /// Appends an event to Documents/debug/log.txt (debug builds only), so it survives a dropped Xcode connection.
+    private func appendDebugLog(_ entry: String) {
+        #if DEBUG
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let folder = documents.appendingPathComponent("debug", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent("log.txt")
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        let data = Data("\(formatter.string(from: Date())) \(entry)\n".utf8)
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: url)
+        }
+        #endif
+    }
+
+    /// Writes the detector's top-down debug view to Documents/debug (debug builds only), so it can be
+    /// copied off the phone with `devicectl device copy from`.
+    private func saveDebugImage(_ image: CGImage?, name: String) {
+        #if DEBUG
+        guard let image, let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
+        let folder = documents.appendingPathComponent("debug", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HHmmss-SSS"
+        let url = folder.appendingPathComponent("\(name)-\(formatter.string(from: Date())).png")
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
+        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationFinalize(destination)
+        #endif
     }
 
     /// Re-detects the board. If it is where the lock expects, detection resumes with the old reference;
@@ -331,12 +427,7 @@ nonisolated final class CaptureEngine: NSObject, AVCaptureVideoDataOutputSampleB
                 detector.resumeAfterCameraCheck()
                 status = "Camera OK"
             } else {
-                lockedHomography = homography
-                lockedImageSize = result.imageSize
-                dartDetector = DartDetector(boardToImage: homography, focalLength: focalLength,
-                                            imageSize: result.imageSize, darts: detector.darts,
-                                            turnComplete: detector.turnComplete)
-                onRecalibrated?(result)
+                relock(homography, result: result, keeping: detector)
                 status = String(format: "Camera moved %.0f px – recalibrated", shift)
             }
             mode = .locked
@@ -346,6 +437,80 @@ nonisolated final class CaptureEngine: NSObject, AVCaptureVideoDataOutputSampleB
         let lines = [status] + result.debug.lines
         onDarts?(DartState(status: status, debug: DetectionDebug(lines: lines, mask: result.debug.mask)))
         return lines
+    }
+
+    /// Routine re-detection of a board that is probably in place. Re-locks (keeping the turn's darts) when it
+    /// crept more than `refreshTolerance`; otherwise, or if the board can't be found, carries on as before.
+    private func refreshCalibration(_ pixelBuffer: CVPixelBuffer) -> [String] {
+        guard let checker, let locked = lockedHomography, let detector = dartDetector else {
+            mode = .calibrating
+            return []
+        }
+        let result = checker.process(pixelBuffer)
+        refreshFrames += 1
+        var status = "Auto-calibrating…"
+        var done = false
+
+        if let homography = result.boardToImage {
+            let shift = Self.maxShift(locked, homography)
+            if shift > refreshTolerance && shift <= refreshMaxShift {
+                relock(homography, result: result, keeping: detector)
+                status = String(format: "Auto-calibrated: board moved %.1f px (drift was %.1f mm)", shift, detector.driftSinceLock)
+            } else {
+                detector.resumeAfterRefresh()
+                status = String(format: "Auto-calibration: board moved %.1f px, kept", shift)
+            }
+            done = true
+        } else if refreshFrames >= refreshFrameLimit {
+            detector.resumeAfterRefresh()
+            status = "Auto-calibration: board not found, kept"
+            done = true
+        }
+        if done {
+            mode = .locked
+            self.checker = nil
+            print("[Dartify] " + status)
+            appendDebugLog(status)
+        }
+
+        let lines = [status] + result.debug.lines
+        onDarts?(DartState(status: status, debug: DetectionDebug(lines: lines, mask: result.debug.mask)))
+        return lines
+    }
+
+    /// Saves frames and a record for each detected dart (see `DartDataset`) and tags the dart with the record id.
+    private func collectTrainingData(_ state: inout DartState, _ pixelBuffer: CVPixelBuffer, _ detector: DartDetector) {
+        switch state.event {
+        case .dart(var dart):
+            guard let homography = lockedHomography,
+                  let saved = dataset.recordDart(after: pixelBuffer, before: baseFrame, dart: dart,
+                                                 dartIndex: detector.darts.count - 1, tip: detector.lastTipInfo,
+                                                 boardToImage: homography, camera: detector.cameraPose)
+            else { return }
+            dart.captureID = saved.id
+            state.event = .dart(dart)
+            baseFrame = saved.frame
+        case .cleared:
+            // This frame is the empty board the next darts are compared with.
+            baseFrame = dataset.saveFrame(pixelBuffer)
+        case .cameraMoved:
+            baseFrame = nil
+        case nil:
+            // After a lock or a new turn, keep the first still frame as the "before" frame.
+            if baseFrame == nil && (state.status.hasPrefix("Ready") || state.status.hasPrefix("New turn")) {
+                baseFrame = dataset.saveFrame(pixelBuffer)
+            }
+        }
+    }
+
+    private func relock(_ homography: Homography, result: DetectionResult, keeping detector: DartDetector) {
+        lockedHomography = homography
+        lockedImageSize = result.imageSize
+        dartDetector = DartDetector(boardToImage: homography, focalLength: focalLength,
+                                    imageSize: result.imageSize, darts: detector.darts,
+                                    turnComplete: detector.turnComplete)
+        baseFrame = nil
+        onRecalibrated?(result)
     }
 
     /// Largest image-space difference between two calibrations at the bull and the double ring.

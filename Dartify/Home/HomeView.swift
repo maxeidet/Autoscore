@@ -33,10 +33,7 @@ struct HomeView: View {
                 .buttonStyle(SoftPressStyle())
                 .rise(2, appeared)
                 playSection.rise(3, appeared)
-                Text("Dartify · camera scoring")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Soft.subtle)
-                    .padding(.top, 8)
+                
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -45,8 +42,8 @@ struct HomeView: View {
         .background(Soft.canvas.ignoresSafeArea())
         .onAppear { appeared = true }
         .sheet(item: $setupMode) { mode in
-            MatchSetupSheet(mode: mode) { settings, players, input in
-                match = MatchController(settings: settings, players: players, input: input)
+            MatchSetupSheet(mode: mode) { settings, players, input, bots in
+                match = MatchController(settings: settings, players: players, input: input, bots: bots)
                 showingGame = true
             }
         }
@@ -55,7 +52,7 @@ struct HomeView: View {
                 GameView(
                     match: match,
                     onLeave: { showingGame = false },
-                    onRematch: { self.match = MatchController(settings: match.settings, players: match.roster, input: match.input) },
+                    onRematch: { self.match = match.rematch() },
                     onFinish: {
                         showingGame = false
                         self.match = nil
@@ -132,6 +129,8 @@ struct HomeView: View {
                     .font(.system(size: 26, weight: .semibold))
                     .displayTracking()
                     .foregroundStyle(Soft.slate)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 20)
                 if played > 0 && average != nil {
                     Text("\(played) \(played == 1 ? "game" : "games") played")
@@ -144,15 +143,11 @@ struct HomeView: View {
             .padding(.top, 16)
             .padding(.bottom, 20)
 
-            HStack(spacing: 0) {
-                StatTile(systemImage: "target", accent: .mint, value: average.map { String(format: "%.1f", $0) }, label: "3-dart avg")
-                Divider().padding(.vertical, 16)
-                StatTile(systemImage: "trophy.fill", accent: .azure, value: summary.highestCheckout.map(String.init), label: "High out")
-                Divider().padding(.vertical, 16)
-                StatTile(systemImage: "flame.fill", accent: .coral, value: summary.bestLegDarts.map(String.init), label: "Best leg")
-            }
-            .padding(8)
-            .softCard()
+            SeasonBoard(
+                average: average.map { String(format: "%.1f", $0) },
+                highOut: summary.highestCheckout.map(String.init),
+                bestLeg: summary.bestLegDarts.map(String.init)
+            )
         }
         .padding(8)
         .softShell()
@@ -167,16 +162,20 @@ struct HomeView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 8)
 
-            ModeRow(systemImage: "scope", accent: .mint, title: "X01", subtitle: "301 · 501 · 701", badge: "Classic") {
-                setupMode = .x01
+            VStack(spacing: 0) {
+                ModeRow(glyph: .x01, title: "X01", subtitle: "301 · 501 · 701") { setupMode = .x01 }
+                ModeDivider()
+                ModeRow(glyph: .killer, title: "Killer", subtitle: "Reach 3, then hunt the others") { setupMode = .killer }
+                ModeDivider()
+                ModeRow(glyph: .aroundTheClock, title: "Around the Clock", subtitle: "Hit 1 to 20 in order")
+                ModeDivider()
+                ModeRow(glyph: .roundTheWorld, title: "Round the World", subtitle: "Points on every number")
+                ModeDivider()
+                ModeRow(glyph: .cricket, title: "Cricket", subtitle: "Close out 15 to 20 and bull")
             }
-            ModeRow(systemImage: "flame.fill", accent: .coral, title: "Killer", subtitle: "Reach 3, then hunt the others", badge: "Party") {
-                setupMode = .killer
-            }
-            ModeRow(systemImage: "clock", accent: .azure, title: "Around the Clock", subtitle: "Hit 1 to 20 in order", badge: "Soon")
-            ModeRow(systemImage: "globe", accent: .orchid, title: "Round the World", subtitle: "Points on every number", badge: "Soon")
-            ModeRow(systemImage: "list.bullet.rectangle", accent: .coral, title: "Cricket", subtitle: "Close out 15 to 20 and bull", badge: "Soon")
-
+            .padding(.vertical, 4)
+            .softCard()
+            /*
             Button {
                 setupMode = .x01
             } label: {
@@ -186,51 +185,193 @@ struct HomeView: View {
             .padding(.top, 4)
             .padding(.horizontal, 4)
             .padding(.bottom, 4)
+             */
         }
         .padding(8)
         .softShell()
     }
 }
 
-/// Game mode row: tinted icon tile, title, subtitle and a badge. No action means "coming soon".
+/// The season numbers as three soft tinted tiles in the seat colours: a big coloured number and its label, no icons.
+private struct SeasonBoard: View {
+    let average: String?
+    let highOut: String?
+    let bestLeg: String?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            tile(average, label: "3-dart avg", accent: .mint)
+            tile(highOut, label: "High out", accent: .azure)
+            tile(bestLeg, label: "Best leg", unit: "darts", accent: .coral)
+        }
+        .padding(8)
+        .softCard()
+    }
+
+    private func tile(_ value: String?, label: String, unit: String? = nil, accent: Accent) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(value ?? "–")
+                    .font(.system(size: 28, weight: .semibold))
+                    .monospacedDigit()
+                    .displayTracking()
+                    .foregroundStyle(value == nil ? accent.ink.opacity(0.35) : accent.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                if let unit, value != nil {
+                    Text(unit)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(accent.ink.opacity(0.7))
+                }
+            }
+            Text(label)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(accent.ink.opacity(0.75))
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .background(accent.tint, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Game mode row: a small board showing where the mode is played, title and subtitle.
+/// No action means the mode isn't built yet.
 private struct ModeRow: View {
-    let systemImage: String
-    let accent: Accent
+    let glyph: ModeGlyph
     let title: String
     let subtitle: String
-    let badge: String
     var action: (() -> Void)?
+
+    private var isSoon: Bool { action == nil }
 
     var body: some View {
         Button {
             action?()
         } label: {
             HStack(spacing: 14) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(accent.ink)
-                    .frame(width: 54, height: 54)
-                    .background(accent.tint, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .opacity(action == nil ? 0.5 : 1)
+                ModeBoard(glyph: glyph, isLive: !isSoon)
+                    .frame(width: 48, height: 48)
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.system(size: 18, weight: .semibold))
                         .displayTracking()
-                        .foregroundStyle(action == nil ? Soft.subtle : Soft.slate)
+                        .foregroundStyle(isSoon ? Soft.slateSoft : Soft.slate)
                     Text(subtitle)
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(Soft.subtle)
+                        .foregroundStyle(isSoon ? Soft.subtle : Soft.slateSoft)
                 }
                 .lineLimit(1)
-                Spacer()
-                SoftBadge(accent: accent, text: badge)
+                Spacer(minLength: 8)
+                if isSoon {
+                    Text("Soon")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Soft.subtle)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Soft.subtle)
+                }
             }
-            .padding(10)
-            .padding(.trailing, 6)
-            .softCard()
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
         }
         .buttonStyle(SoftPressStyle())
-        .disabled(action == nil)
+        .disabled(isSoon)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(isSoon ? "Coming soon" : "")
+    }
+}
+
+private struct ModeDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Soft.line)
+            .frame(height: 1)
+            .padding(.leading, 76)
+            .padding(.trailing, 14)
+    }
+}
+
+/// Which beds light up on a mode's board.
+private enum ModeGlyph {
+    case x01, killer, aroundTheClock, roundTheWorld, cricket
+
+    enum Bed { case segment(Int), treble(Int), bull }
+
+    /// Beds with their strength; a fading run reads as "in order".
+    var beds: [(bed: Bed, strength: Double)] {
+        switch self {
+        case .x01: [(.treble(20), 1)]
+        case .killer: [(.segment(7), 1)]
+        case .aroundTheClock: [(.segment(1), 1), (.segment(2), 0.6), (.segment(3), 0.3)]
+        case .roundTheWorld: [(.segment(20), 1), (.segment(1), 0.6), (.segment(18), 0.3)]
+        case .cricket: (15...20).map { (.segment($0), 1) } + [(.bull, 1)]
+        }
+    }
+}
+
+/// A plain dartboard in greys with the mode's beds in board red (grey when the mode isn't playable yet).
+private struct ModeBoard: View {
+    let glyph: ModeGlyph
+    let isLive: Bool
+
+    var body: some View {
+        Canvas { context, size in
+            let r = min(size.width, size.height) / 2
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            let mm = r / BoardGeometry.doubleOuter
+
+            // Board face with alternating wedges.
+            context.fill(Path(ellipseIn: CGRect(x: 0, y: 0, width: 2 * r, height: 2 * r)), with: .color(Soft.track))
+            for index in 0..<20 where index.isMultiple(of: 2) {
+                context.fill(wedge(index: index, from: BoardGeometry.outerBullRadius * mm, to: r, center: center),
+                             with: .color(Color(hex: 0xDEDFE3)))
+            }
+
+            let highlight = isLive ? Soft.danger : Soft.subtle
+            for (bed, strength) in glyph.beds {
+                let path: Path = switch bed {
+                case .segment(let n):
+                    wedge(index: index(of: n), from: BoardGeometry.outerBullRadius * mm, to: r, center: center)
+                case .treble(let n):
+                    wedge(index: index(of: n), from: BoardGeometry.trebleInner * mm, to: BoardGeometry.trebleOuter * mm + 1, center: center)
+                case .bull:
+                    Path(ellipseIn: CGRect(x: center.x - BoardGeometry.outerBullRadius * mm, y: center.y - BoardGeometry.outerBullRadius * mm,
+                                           width: 2 * BoardGeometry.outerBullRadius * mm, height: 2 * BoardGeometry.outerBullRadius * mm))
+                }
+                context.fill(path, with: .color(highlight.opacity(strength)))
+            }
+
+            // Treble and double wires, so it reads as a board.
+            for radius in [BoardGeometry.trebleInner, BoardGeometry.trebleOuter, BoardGeometry.doubleInner] {
+                let d = radius * mm
+                context.stroke(Path(ellipseIn: CGRect(x: center.x - d, y: center.y - d, width: 2 * d, height: 2 * d)),
+                               with: .color(.white.opacity(0.9)), lineWidth: 0.75)
+            }
+        }
+    }
+
+    private func index(of number: Int) -> Int { BoardGeometry.order.firstIndex(of: number) ?? 0 }
+
+    /// An annular sector for segment `index`, between two radii in points.
+    private func wedge(index: Int, from inner: CGFloat, to outer: CGFloat, center: CGPoint) -> Path {
+        let mid = BoardGeometry.segmentAngle(index)
+        let angles = stride(from: mid - 9, through: mid + 9, by: 1.5).map { $0 * .pi / 180 }
+        // Board angles go counter-clockwise with y up; the canvas has y down.
+        func point(_ radius: CGFloat, _ a: Double) -> CGPoint {
+            CGPoint(x: center.x + radius * CGFloat(cos(a)), y: center.y - radius * CGFloat(sin(a)))
+        }
+        var path = Path()
+        path.move(to: point(outer, angles[0]))
+        for a in angles.dropFirst() { path.addLine(to: point(outer, a)) }
+        for a in angles.reversed() { path.addLine(to: point(inner, a)) }
+        path.closeSubpath()
+        return path
     }
 }
 

@@ -5,6 +5,7 @@
 //  X01 match setup, after the React app's MatchSetupSheet.
 //
 
+import SwiftData
 import SwiftUI
 
 enum SetupMode: String, Identifiable {
@@ -14,10 +15,12 @@ enum SetupMode: String, Identifiable {
 
 struct MatchSetupSheet: View {
     let mode: SetupMode
-    let start: (MatchSettings, [SavedPlayer], ScoringInput) -> Void
+    /// Settings, players in throwing order, scoring input, and each bot's 3-dart average by player id.
+    let start: (MatchSettings, [SavedPlayer], ScoringInput, [UUID: Double]) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var store = LocalStore.shared
+    @Query private var statMatches: [MatchStat]
 
     @State private var startingScore = 501
     @State private var doubleOut = true
@@ -29,6 +32,19 @@ struct MatchSetupSheet: View {
     @State private var newName = ""
     /// Remembers the last choice between matches.
     @AppStorage("dartify.scoringInput") private var input: ScoringInput = .camera
+    /// The bot's level when set by hand; nil plays at your own average.
+    @State private var customBotAverage: Double?
+
+    private static let botRange = 15.0...110.0
+
+    /// Your X01 average over every saved match.
+    private var myAverage: Double? { StatSummary(matches: statMatches).average }
+
+    private var botAverage: Double {
+        customBotAverage ?? myAverage.map { min(max($0, Self.botRange.lowerBound), Self.botRange.upperBound) } ?? 40
+    }
+
+    private var hasBot: Bool { selected.contains(.bot) }
 
     private var config: X01Config {
         X01Config(startingScore: startingScore, doubleOut: doubleOut, doubleIn: doubleIn, legs: bestOf ? legs : 1)
@@ -61,12 +77,17 @@ struct MatchSetupSheet: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         formatCard
-                        scoringCard
                         playersCard
+                        if mode == .x01 && hasBot {
+                            botCard
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                        scoringCard
                     }
                     .padding(.horizontal, 16)
                     // Room to scroll the last card clear of the floating button.
                     .padding(.bottom, 96)
+                    .animation(.spring(response: 0.38, dampingFraction: 0.85), value: hasBot)
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
@@ -83,7 +104,7 @@ struct MatchSetupSheet: View {
     /// Floats over the scrolling cards, pinned to the bottom; the cards fade out beneath it.
     private var startButton: some View {
         Button {
-            start(settings, selected, input)
+            start(settings, selected, input, mode == .x01 && hasBot ? [SavedPlayer.bot.id: botAverage] : [:])
             dismiss()
         } label: {
             Label(remaining == 0 ? "Start match" : "Pick \(remaining) more \(remaining == 1 ? "player" : "players")",
@@ -229,7 +250,7 @@ struct MatchSetupSheet: View {
                     PlayerChip(
                         player: player,
                         order: selected.firstIndex(of: player),
-                        isYou: store.isMain(player),
+                        tag: store.isMain(player) ? "You" : nil,
                         disabled: selected.count >= numPlayers && !selected.contains(player),
                         toggle: { toggle(player) }
                     )
@@ -242,6 +263,16 @@ struct MatchSetupSheet: View {
                             }
                         }
                     }
+                }
+                if mode == .x01 {
+                    PlayerChip(
+                        player: .bot,
+                        order: selected.firstIndex(of: .bot),
+                        tag: String(format: "%.0f avg", botAverage),
+                        icon: "cpu",
+                        disabled: selected.count >= numPlayers && !hasBot,
+                        toggle: { toggle(.bot) }
+                    )
                 }
             }
 
@@ -275,6 +306,67 @@ struct MatchSetupSheet: View {
         .softCard()
     }
 
+    /// The bot's level: your average by default, or any average set with the slider or steppers.
+    private var botCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionLabel(systemImage: "cpu", title: "Bot")
+
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(String(format: "%.1f", botAverage))
+                        .font(.system(size: 40, weight: .semibold))
+                        .monospacedDigit()
+                        .displayTracking()
+                        .foregroundStyle(Soft.slate)
+                        .contentTransition(.numericText())
+                    Text("3-dart average")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Soft.subtle)
+                }
+                Spacer()
+                SoftIconButton(systemImage: "minus", size: 44) { nudgeBot(-1) }
+                    .disabled(botAverage <= Self.botRange.lowerBound)
+                SoftIconButton(systemImage: "plus", size: 44) { nudgeBot(1) }
+                    .disabled(botAverage >= Self.botRange.upperBound)
+            }
+
+            Slider(
+                value: Binding(get: { botAverage }, set: { customBotAverage = $0.rounded() }),
+                in: Self.botRange,
+                step: 1
+            )
+            .tint(Accent.slot(selected.firstIndex(of: .bot) ?? 1).solid)
+
+            Group {
+                if let myAverage, customBotAverage != nil {
+                    Button {
+                        withAnimation(.snappy) { customBotAverage = nil }
+                    } label: {
+                        Label("Use my average (\(String(format: "%.1f", myAverage)))", systemImage: "arrow.uturn.backward")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Accent.mint.ink)
+                    }
+                } else {
+                    Text(myAverage != nil
+                         ? "Plays at your average. Drag to make it easier or harder."
+                         : "No X01 average yet, so it starts at 40. Drag to set its level.")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Soft.subtle)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.leading, 4)
+        }
+        .padding(20)
+        .softCard()
+        .animation(.snappy, value: botAverage)
+    }
+
+    private func nudgeBot(_ step: Double) {
+        let next = (botAverage + step).rounded()
+        customBotAverage = min(max(next, Self.botRange.lowerBound), Self.botRange.upperBound)
+    }
+
     private func toggle(_ player: SavedPlayer) {
         withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
             if let index = selected.firstIndex(of: player) {
@@ -298,7 +390,10 @@ struct MatchSetupSheet: View {
 private struct PlayerChip: View {
     let player: SavedPlayer
     let order: Int?
-    var isYou = false
+    /// Small text after the name, e.g. "You" or the bot's average.
+    var tag: String?
+    /// Shown in the avatar instead of the initial.
+    var icon: String?
     let disabled: Bool
     let toggle: () -> Void
 
@@ -306,12 +401,21 @@ private struct PlayerChip: View {
         let accent = order.map(Accent.slot) ?? Accent.forName(player.name)
         Button(action: toggle) {
             HStack(spacing: 8) {
-                SoftAvatar(name: player.name, size: 28, accent: accent)
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(accent.ink)
+                        .frame(width: 28, height: 28)
+                        .background(accent.tint, in: Circle())
+                        .overlay(Circle().stroke(.white, lineWidth: 2))
+                } else {
+                    SoftAvatar(name: player.name, size: 28, accent: accent)
+                }
                 Text(player.name)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(order != nil ? accent.ink : Soft.slate)
-                if isYou {
-                    Text("You")
+                if let tag {
+                    Text(tag)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(order != nil ? accent.ink.opacity(0.7) : Soft.subtle)
                 }
